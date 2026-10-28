@@ -1,0 +1,226 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  LIBRARIAN
+  MEMBER
+}
+
+enum AccountStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum ResourceStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum CopyStatus {
+  AVAILABLE
+  ON_LOAN
+  RESERVED
+  LOST
+  DAMAGED
+}
+
+enum LoanStatus {
+  ACTIVE
+  RETURNED
+  OVERDUE
+}
+
+enum ReservationStatus {
+  WAITING
+  AVAILABLE
+  FULFILLED
+  CANCELLED
+  EXPIRED
+}
+
+model User {
+  id            String         @id @default(cuid())
+  fullName      String         @map("full_name")
+  email         String         @unique
+  passwordHash  String         @map("password_hash")
+  role          UserRole       @default(MEMBER)
+  accountStatus AccountStatus  @default(ACTIVE) @map("account_status")
+  createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+  sessions      Session[]
+  loans         Loan[]         @relation("BorrowerLoans")
+  issuedLoans   Loan[]         @relation("IssuedLoans")
+  reservations  Reservation[]
+  notifications Notification[]
+  auditLogs     AuditLog[]
+
+  @@index([role, accountStatus])
+  @@map("users")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique @map("token_hash")
+  userId    String   @map("user_id")
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model Category {
+  id        String     @id @default(cuid())
+  name      String     @unique
+  createdAt DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  resources Resource[]
+
+  @@map("categories")
+}
+
+model Author {
+  id        String           @id @default(cuid())
+  name      String           @unique
+  resources ResourceAuthor[]
+
+  @@map("authors")
+}
+
+model Publisher {
+  id        String     @id @default(cuid())
+  name      String     @unique
+  resources Resource[]
+
+  @@map("publishers")
+}
+
+model Resource {
+  id              String           @id @default(cuid())
+  title           String
+  description     String?
+  isbn            String?          @unique
+  publicationYear Int?             @map("publication_year")
+  resourceType    String           @default("BOOK") @map("resource_type")
+  categoryId      String?          @map("category_id")
+  publisherId     String?          @map("publisher_id")
+  coverImageUrl   String?          @map("cover_image_url")
+  digitalFileUrl  String?          @map("digital_file_url")
+  status          ResourceStatus   @default(ACTIVE)
+  archivedAt      DateTime?        @map("archived_at") @db.Timestamptz(3)
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+  category        Category?        @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  publisher       Publisher?       @relation(fields: [publisherId], references: [id], onDelete: SetNull)
+  authors         ResourceAuthor[]
+  copies          PhysicalCopy[]
+  reservations    Reservation[]
+
+  @@index([title])
+  @@index([categoryId])
+  @@index([status])
+  @@map("resources")
+}
+
+model ResourceAuthor {
+  resourceId String   @map("resource_id")
+  authorId   String   @map("author_id")
+  resource   Resource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  author     Author   @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@id([resourceId, authorId])
+  @@index([authorId])
+  @@map("resource_authors")
+}
+
+model PhysicalCopy {
+  id              String        @id @default(cuid())
+  resourceId      String        @map("resource_id")
+  accessionNumber String        @unique @map("accession_number")
+  barcode         String?       @unique
+  copyStatus      CopyStatus    @default(AVAILABLE) @map("copy_status")
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  resource        Resource      @relation(fields: [resourceId], references: [id], onDelete: Restrict)
+  loans           Loan[]
+  reservations    Reservation[]
+
+  @@index([resourceId, copyStatus])
+  @@map("physical_copies")
+}
+
+model Reservation {
+  id             String            @id @default(cuid())
+  userId         String            @map("user_id")
+  resourceId     String            @map("resource_id")
+  physicalCopyId String?           @map("physical_copy_id")
+  queuePosition  Int               @map("queue_position")
+  status         ReservationStatus @default(WAITING)
+  reservedAt     DateTime          @default(now()) @map("reserved_at") @db.Timestamptz(3)
+  expiresAt      DateTime?         @map("expires_at") @db.Timestamptz(3)
+  user           User              @relation(fields: [userId], references: [id], onDelete: Restrict)
+  resource       Resource          @relation(fields: [resourceId], references: [id], onDelete: Restrict)
+  physicalCopy   PhysicalCopy?     @relation(fields: [physicalCopyId], references: [id], onDelete: Restrict)
+
+  @@index([resourceId, status, queuePosition])
+  @@index([userId, reservedAt])
+  @@index([status, expiresAt])
+  @@map("reservations")
+}
+
+model Loan {
+  id             String       @id @default(cuid())
+  userId         String       @map("user_id")
+  physicalCopyId String       @map("physical_copy_id")
+  issuedById     String       @map("issued_by_id")
+  borrowedAt     DateTime     @default(now()) @map("borrowed_at") @db.Timestamptz(3)
+  dueAt          DateTime     @map("due_at") @db.Timestamptz(3)
+  returnedAt     DateTime?    @map("returned_at") @db.Timestamptz(3)
+  loanStatus     LoanStatus   @default(ACTIVE) @map("loan_status")
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  user           User         @relation("BorrowerLoans", fields: [userId], references: [id], onDelete: Restrict)
+  issuedBy       User         @relation("IssuedLoans", fields: [issuedById], references: [id], onDelete: Restrict)
+  physicalCopy   PhysicalCopy @relation(fields: [physicalCopyId], references: [id], onDelete: Restrict)
+
+  @@index([userId, loanStatus])
+  @@index([physicalCopyId, loanStatus])
+  @@index([dueAt, loanStatus])
+  @@map("loans")
+}
+
+model Notification {
+  id               String    @id @default(cuid())
+  userId           String    @map("user_id")
+  title            String
+  message          String
+  notificationType String    @map("notification_type")
+  readAt           DateTime? @map("read_at") @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String   @map("actor_user_id")
+  action      String
+  entityType  String   @map("entity_type")
+  entityId    String   @map("entity_id")
+  metadata    Json?
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  actor       User     @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@index([actorUserId, createdAt])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
