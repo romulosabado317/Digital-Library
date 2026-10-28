@@ -53,6 +53,24 @@ Requirements: Node.js 20.19+ and npm. A PostgreSQL database is required; the API
 
 The frontend is served at `http://localhost:5173`; the API listens on port `4000`. Vite proxies `/api` requests to the local backend. `backend\.env.example` contains only placeholders. Change the demonstration passwords before seeding and do not use them for real accounts.
 
+To create the first administrator directly in the configured database, first apply migrations with `npm run db:deploy`. In PowerShell, from the project root, enter the admin email and a new 16+ character password without placing the password in shell history:
+
+```powershell
+$env:ADMIN_EMAIL = Read-Host "Admin email"
+$securePassword = Read-Host "New admin password (16+ characters)" -AsSecureString
+$passwordPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword)
+try {
+  $env:ADMIN_PASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($passwordPointer)
+  npm run admin:create --workspace backend
+} finally {
+  [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($passwordPointer)
+  Remove-Item Env:ADMIN_EMAIL -ErrorAction SilentlyContinue
+  Remove-Item Env:ADMIN_PASSWORD -ErrorAction SilentlyContinue
+}
+```
+
+The command reads `DATABASE_URL` from `backend\.env`, creates an `ADMIN` account with a bcrypt-hashed password, and refuses to overwrite an existing account. Do not configure this password in Render or commit it to source control.
+
 ## API in this milestone
 
 | Method | Path | Access | Purpose |
@@ -95,11 +113,11 @@ Treat the export as sensitive data, store it privately, and do not commit it. Pr
 
 ## Free-tier deployment guide
 
-No hosting setup has been run. Do not claim a deployment is live until actual services and the health endpoint have been checked.
+These settings document the deployment configuration; verify actual service URLs and health checks before considering a deployment live.
 
 1. **Supabase:** create a Free project; copy the PostgreSQL connection string from the project’s Connect settings. Set it only as a backend environment variable. Use the provider’s SSL-enabled connection instructions. No database credential belongs in Vite variables or source control.
 2. **Render API:** create a Node Web Service from the repository. Use root directory `.`, build command `npm install && npm run db:generate`, and start command `npm run start --workspace backend`. Set `NODE_ENV=production`, `DATABASE_URL`, `FRONTEND_ORIGIN` (the deployed static-site origin), `SESSION_COOKIE_NAME`, and `SESSION_TTL_DAYS` in the service environment. Run `npm run db:deploy` once the database is configured.
-3. **Render frontend:** create a Static Site from the same repository. Use root directory `.`, build command `npm install && npm run build --workspace frontend`, and publish directory `frontend/dist`. Set `VITE_API_BASE_URL` to the API URL plus `/api/v1` (for example `https://your-api.onrender.com/api/v1`). Add a rewrite from `/*` to `/index.html` for client-side routing.
+3. **Render frontend:** create a Static Site from the same repository. Use root directory `.`, build command `npm run build --workspace frontend`, and publish directory `frontend/dist`. Render installs the repository dependencies before the build command. Set `VITE_API_BASE_URL` to the API URL plus `/api/v1` (for example `https://your-api.onrender.com/api/v1`). Add a rewrite from `/*` to `/index.html` for client-side routing. The frontend declares the Linux x64 glibc Rollup optional package explicitly so Render can install the correct native build binary from the cross-platform lockfile.
 4. Set the backend `FRONTEND_ORIGIN` to the exact `https://...onrender.com` frontend origin. Redeploy after changing frontend build variables, then verify the frontend login screen, API health endpoint, and an authorized loan workflow.
 5. If seeding a hosted demonstration database is needed, configure `DEMO_LIBRARIAN_EMAIL`, `DEMO_LIBRARIAN_PASSWORD`, and `DEMO_MEMBER_PASSWORD` in a trusted local backend environment, then run `npm run db:seed`. Never expose seed passwords or database credentials in browser variables, logs, screenshots, or source control.
 
