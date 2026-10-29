@@ -122,7 +122,10 @@ export default function AdminUserManagementPage({ user, onLogout }) {
                 type="password"
                 value={form.password}
               />
-              <p className="hint">Use at least 8 characters. Share the temporary password privately with the account holder.</p>
+              <p className="hint">
+                Use at least 8 characters. Share the password privately with the account holder.
+                {form.role === "MEMBER" && " Members must change this temporary password at first sign-in."}
+              </p>
               {error && <p className="form-error" role="alert">{error}</p>}
               <button className="primary-button" disabled={saving} type="submit">
                 {saving ? "Creating account..." : "Create account"}
@@ -142,7 +145,10 @@ export default function AdminUserManagementPage({ user, onLogout }) {
                   <div><dt>Email</dt><dd>{createdUser.email}</dd></div>
                   <div><dt>Role</dt><dd>{createdUser.role === "LIBRARIAN" ? "Librarian" : "Member"}</dd></div>
                 </dl>
-                <p className="muted">The password is not displayed or recoverable here. Share the password you entered through a secure channel.</p>
+                <p className="muted">
+                  The password is not displayed or recoverable here. Share it through a secure channel.
+                  {createdUser.role === "MEMBER" && " The member must change this temporary password at first sign-in."}
+                </p>
               </div>
             ) : (
               <>

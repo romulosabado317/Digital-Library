@@ -21,6 +21,10 @@ const loginSchema = z.object({
   email: z.string().email().max(254).transform((email) => email.toLowerCase()),
   password: z.string().min(1).max(128),
 });
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1).max(128),
+  newPassword: z.string().min(8).max(128),
+});
 
 const issueLoanSchema = z.object({
   memberId: z.string().min(1).max(64),
@@ -218,8 +222,23 @@ export function createApp({
 
     const rawToken = randomBytes(32).toString("base64url");
     const expiresAt = new Date(Date.now() + env.SESSION_TTL_DAYS * 24 * 60 * 60 * 1000);
-    await prisma.session.create({
-      data: { tokenHash: hashSessionToken(rawToken), userId: user.id, expiresAt },
+    await prisma.$transaction(async (tx) => {
+      // Serialize session creation with password changes on the same account row.
+      const verifiedAccount = await tx.user.updateMany({
+        where: {
+          id: user.id,
+          passwordHash: user.passwordHash,
+          accountStatus: "ACTIVE",
+        },
+        data: { updatedAt: new Date() },
+      });
+      if (verifiedAccount.count !== 1) {
+        throw new HttpError(401, "INVALID_CREDENTIALS", "Email or password is incorrect.");
+      }
+
+      await tx.session.create({
+        data: { tokenHash: hashSessionToken(rawToken), userId: user.id, expiresAt },
+      });
     });
 
     res.cookie(env.SESSION_COOKIE_NAME, rawToken, {
@@ -231,9 +250,66 @@ export function createApp({
     });
     res.json({
       data: {
-        user: { id: user.id, fullName: user.fullName, email: user.email, role: user.role },
+        user: {
+          id: user.id,
+          fullName: user.fullName,
+          email: user.email,
+          role: user.role,
+          mustChangePassword: user.mustChangePassword === true,
+        },
       },
     });
+  }));
+
+  app.post("/api/v1/auth/password", authLimiter, requireAuthenticated, asyncRoute(async (req, res) => {
+    const { currentPassword, newPassword } = changePasswordSchema.parse(req.body);
+    if (Buffer.byteLength(newPassword, "utf8") > 72) {
+      throw new HttpError(400, "WEAK_PASSWORD", "The new password must not exceed 72 UTF-8 bytes.");
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { passwordHash: true },
+    });
+    if (!user || !await bcrypt.compare(currentPassword, user.passwordHash)) {
+      throw new HttpError(401, "INVALID_CURRENT_PASSWORD", "The current password is incorrect.");
+    }
+    if (currentPassword === newPassword) {
+      throw new HttpError(400, "PASSWORD_UNCHANGED", "Choose a new password different from your current password.");
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+    const changedUser = await prisma.$transaction(async (tx) => {
+      const updated = await tx.user.updateMany({
+        where: { id: req.user.id, passwordHash: user.passwordHash },
+        data: { passwordHash, mustChangePassword: false },
+      });
+      if (updated.count !== 1) {
+        throw new HttpError(409, "PASSWORD_CHANGED", "Your password changed in another session. Sign in again.");
+      }
+
+      await tx.session.deleteMany({
+        where: { userId: req.user.id, id: { not: req.sessionId } },
+      });
+      await tx.auditLog.create({
+        data: {
+          actorUserId: req.user.id,
+          action: "PASSWORD_CHANGED",
+          entityType: "User",
+          entityId: req.user.id,
+          metadata: { selfService: true, temporaryPassword: req.user.mustChangePassword },
+        },
+      });
+
+      return {
+        id: req.user.id,
+        fullName: req.user.fullName,
+        email: req.user.email,
+        role: req.user.role,
+        mustChangePassword: false,
+      };
+    });
+    res.json({ data: { user: changedUser } });
   }));
 
   app.post("/api/v1/auth/logout", asyncRoute(async (req, res) => {

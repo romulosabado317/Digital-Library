@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ArrowRight, BookOpen, Check, ChevronLeft, ChevronRight, LibraryBig, LogOut, Search, ShieldCheck, UserPlus } from "lucide-react";
-import { Link, NavLink, Route, Routes, useNavigate, useParams } from "react-router-dom";
+import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
+import ChangePasswordPage from "./components/ChangePasswordPage.jsx";
 import AdminUserManagementPage from "./components/AdminUserManagementPage.jsx";
 import { api } from "./services/api.js";
 
@@ -18,7 +19,7 @@ function Login({ onLogin, notice }) {
     try {
       const { data } = await api.post("/auth/login", { email, password });
       onLogin(data.data.user);
-      navigate("/");
+      navigate(data.data.user.mustChangePassword ? "/change-password" : "/");
     } catch (requestError) {
       setError(requestError.response?.data?.error?.message ?? "Unable to sign in. Please try again.");
     } finally {
@@ -150,6 +151,7 @@ function CatalogPage({ user, onLogout }) {
         <nav aria-label="Catalog navigation" className="catalog-nav">
           <NavLink end to="/">Catalog</NavLink>
           {user?.role === "MEMBER" && <Link to="/my-loans">My account</Link>}
+          {user?.role === "MEMBER" && <Link to="/change-password">Change password</Link>}
           {["ADMIN", "LIBRARIAN"].includes(user?.role) && (
             <>
               <Link to="/staff/loans">Loan desk</Link>
@@ -407,6 +409,7 @@ function MemberLoansPage({ user, onLogout }) {
         <Link className="catalog-brand" to="/catalog"><span className="sidebar-mark"><LibraryBig size={21} aria-hidden="true" /></span> Digital Library</Link>
         <nav aria-label="Member navigation" className="catalog-nav">
           <Link to="/catalog">Catalog</Link>
+          <Link to="/change-password">Change password</Link>
           <button className="text-button" onClick={onLogout} type="button">Sign out</button>
         </nav>
       </header>
@@ -982,6 +985,7 @@ function LoanDesk({ user, onLogout }) {
 }
 
 export default function App() {
+  const location = useLocation();
   const [user, setUser] = useState(null);
   const [checkingSession, setCheckingSession] = useState(true);
   const [authNotice, setAuthNotice] = useState("");
@@ -1012,11 +1016,19 @@ export default function App() {
   if (checkingSession) {
     return <main className="loading-screen" role="status">Loading your workspace...</main>;
   }
+  if (user?.mustChangePassword && location.pathname !== "/change-password") {
+    return <Navigate replace to="/change-password" />;
+  }
   return (
     <Routes>
       <Route path="/" element={<CatalogPage user={user} onLogout={logout} />} />
       <Route path="/catalog" element={<CatalogPage user={user} onLogout={logout} />} />
       <Route path="/catalog/:id" element={<ResourceDetailPage user={user} />} />
+      <Route path="/change-password" element={user?.role === "MEMBER"
+        ? <ChangePasswordPage user={user} onPasswordChanged={setUser} onLogout={logout} />
+        : user
+          ? <CatalogPage user={user} onLogout={logout} />
+          : <Login onLogin={setUser} notice={authNotice} />} />
       <Route path="/sign-in" element={!user
         ? <Login onLogin={setUser} notice={authNotice} />
         : <CatalogPage user={user} onLogout={logout} />} />

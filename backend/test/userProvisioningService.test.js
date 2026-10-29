@@ -24,6 +24,7 @@ function createPrismaFixture(existingUser = null) {
             email: data.email,
             role: data.role,
             accountStatus: data.accountStatus,
+            mustChangePassword: data.mustChangePassword,
           };
         },
       },

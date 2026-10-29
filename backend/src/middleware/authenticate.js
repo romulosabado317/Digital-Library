@@ -31,6 +31,7 @@ export function createAuthenticate(prisma, cookieName) {
         fullName: session.user.fullName,
         email: session.user.email,
         role: session.user.role,
+        mustChangePassword: session.user.mustChangePassword === true,
       };
       req.sessionId = session.id;
       return next();
@@ -43,6 +44,18 @@ export function createAuthenticate(prisma, cookieName) {
 export function requireAuthenticated(req, _res, next) {
   if (!req.user) {
     return next(new HttpError(401, "UNAUTHENTICATED", "Authentication is required."));
+  }
+  const allowedDuringPasswordChange = (
+    req.method === "GET" && req.path === "/api/v1/auth/me"
+  ) || (
+    req.method === "POST" && req.path === "/api/v1/auth/password"
+  );
+  if (req.user.mustChangePassword && !allowedDuringPasswordChange) {
+    return next(new HttpError(
+      403,
+      "PASSWORD_CHANGE_REQUIRED",
+      "Change your temporary password before continuing.",
+    ));
   }
   return next();
 }

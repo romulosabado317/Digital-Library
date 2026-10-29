@@ -23,6 +23,7 @@ function createApiFixture({
       email: "librarian@example.test",
       role: "LIBRARIAN",
       accountStatus: "ACTIVE",
+      passwordHash: bcrypt.hashSync("correct-password", 4),
     },
     "member-1": {
       id: "member-1",
@@ -156,9 +157,6 @@ function createApiFixture({
     user: {
       findUnique: async ({ where }) => {
         if (where.id) return users[where.id] ? { ...users[where.id] } : null;
-        if (where.email === "librarian@example.test") {
-          return { ...users["librarian-1"], passwordHash: await bcrypt.hash("correct-password", 4) };
-        }
         const user = Object.values(users).find((candidate) => candidate.email === where.email);
         return user ? { ...user } : null;
       },
@@ -310,7 +308,7 @@ test("login does not create a session when the verified password changed concurr
   assert.equal(app.locals.sessionCreateCalls.length, 0);
 });
 
-test("members change their temporary password and keep only the current session", async () => {
+test("members change temporary and permanent passwords and keep only the current session", async () => {
   const app = createApiFixture({ memberMustChangePassword: true });
   const invalidCurrentPassword = await request(app)
     .post("/api/v1/auth/password")
@@ -324,6 +322,10 @@ test("members change their temporary password and keep only the current session"
     .post("/api/v1/auth/password")
     .set("Cookie", `${cookieName}=${memberToken}`)
     .send({ currentPassword: "temporary-password", newPassword: "A new member password" });
+  const changedAgain = await request(app)
+    .post("/api/v1/auth/password")
+    .set("Cookie", `${cookieName}=${memberToken}`)
+    .send({ currentPassword: "A new member password", newPassword: "An updated member password" });
   const loans = await request(app)
     .get("/api/v1/loans/me")
     .set("Cookie", `${cookieName}=${memberToken}`);
@@ -333,20 +335,26 @@ test("members change their temporary password and keep only the current session"
   const newPasswordLogin = await request(app)
     .post("/api/v1/auth/login")
     .send({ email: "member@example.test", password: "A new member password" });
+  const updatedPasswordLogin = await request(app)
+    .post("/api/v1/auth/login")
+    .send({ email: "member@example.test", password: "An updated member password" });
 
   assert.equal(invalidCurrentPassword.status, 401);
   assert.equal(samePassword.status, 400);
   assert.equal(changed.status, 200);
   assert.equal(changed.body.data.user.mustChangePassword, false);
   assert.equal(Object.hasOwn(changed.body.data.user, "passwordHash"), false);
-  assert.equal(await bcrypt.compare("A new member password", app.locals.testUsers["member-1"].passwordHash), true);
   assert.deepEqual(app.locals.sessionDeleteCalls.at(-1), {
     where: { userId: "member-1", id: { not: "session-1" } },
   });
+  assert.equal(changedAgain.status, 200);
+  assert.equal(await bcrypt.compare("An updated member password", app.locals.testUsers["member-1"].passwordHash), true);
+  assert.equal(app.locals.sessionDeleteCalls.length, 2);
   assert.equal(loans.status, 200);
   assert.equal(oldPasswordLogin.status, 401);
-  assert.equal(newPasswordLogin.status, 200);
-  assert.equal(newPasswordLogin.body.data.user.mustChangePassword, false);
+  assert.equal(newPasswordLogin.status, 401);
+  assert.equal(updatedPasswordLogin.status, 200);
+  assert.equal(updatedPasswordLogin.body.data.user.mustChangePassword, false);
 });
 
 test("password changes reject weak and oversized passwords", async () => {

@@ -60,7 +60,15 @@ export async function createManagedUser(prisma, {
       passwordHash,
       role,
       accountStatus: "ACTIVE",
+      mustChangePassword: role === "MEMBER",
     },
-    select: { id: true, fullName: true, email: true, role: true, accountStatus: true },
+    select: {
+      id: true,
+      fullName: true,
+      email: true,
+      role: true,
+      accountStatus: true,
+      mustChangePassword: true,
+    },
   });
 }
