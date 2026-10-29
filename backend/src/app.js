@@ -271,9 +271,12 @@ export function createApp({
   app.post(
     "/api/v1/users",
     requireAuthenticated,
-    requireRole("ADMIN"),
+    requireRole("ADMIN", "LIBRARIAN"),
     asyncRoute(async (req, res) => {
       const input = managedUserSchema.parse(req.body);
+      if (req.user.role === "LIBRARIAN" && input.role !== "MEMBER") {
+        throw new HttpError(403, "FORBIDDEN", "Librarians can create member accounts only.");
+      }
       const user = await prisma.$transaction(async (tx) => {
         const created = await createManagedUser(tx, input);
         await tx.auditLog.create({

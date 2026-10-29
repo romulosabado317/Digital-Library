@@ -23,7 +23,7 @@ Core relationships: `User` owns sessions, loans, reservations, notifications, an
 - Reservation queue creation, cancellation, expiry, copy promotion, and loan fulfillment run in serializable database transactions; active reservations block resource archival.
 - Public resource catalog is the homepage, with title/description/author search, format/category filters, pagination, resource details, and public metadata that omits private digital file links.
 - Librarian resource management UI and API for creating/updating/archive catalog records and adding physical copies; archive preserves historical loan records.
-- Admin-only account management for creating active librarian and member accounts with server-side password hashing and audit logging.
+- Account management lets administrators create librarian and member accounts, while librarians can create member accounts only; passwords are hashed server-side and creations are audit logged.
 - Clearly labeled synthetic ICCT-context catalog examples for prototype use; these are not official ICCT College holdings.
 - Responsive, keyboard-accessible login, catalog, member-loan view, and staff operations interfaces with loading, empty, success, and error states.
 - Synthetic seed records only; no real student data.

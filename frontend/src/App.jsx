@@ -154,7 +154,7 @@ function CatalogPage({ user, onLogout }) {
             <>
               <Link to="/staff/loans">Loan desk</Link>
               <Link to="/manage/resources">Resources</Link>
-              {user.role === "ADMIN" && <Link to="/manage/users">Accounts</Link>}
+              <Link to="/manage/users">Accounts</Link>
             </>
           )}
           {!user
@@ -822,7 +822,7 @@ function LoanDesk({ user, onLogout }) {
           <NavLink aria-label="Resource management" className="nav-item" title="Resources" to="/manage/resources">
             <LibraryBig size={18} aria-hidden="true" /> Resources
           </NavLink>
-          {user.role === "ADMIN" && <NavLink aria-label="Account management" className="nav-item" title="Accounts" to="/manage/users"><UserPlus size={18} aria-hidden="true" /> Accounts</NavLink>}
+          <NavLink aria-label="Account management" className="nav-item" title="Accounts" to="/manage/users"><UserPlus size={18} aria-hidden="true" /> Accounts</NavLink>
         </nav>
         <div className="sidebar-footer">
           <div className="avatar" aria-hidden="true">{user.fullName.slice(0, 1).toUpperCase()}</div>
@@ -1028,12 +1028,12 @@ export default function App() {
         : user?.role === "MEMBER"
           ? <MemberLoansPage user={user} onLogout={logout} />
           : <Login onLogin={setUser} notice={authNotice} />} />
-      <Route path="/manage/users" element={user?.role === "ADMIN"
+      <Route path="/manage/users" element={["ADMIN", "LIBRARIAN"].includes(user?.role)
         ? <AdminUserManagementPage user={user} onLogout={logout} />
         : user
           ? <main className="login-shell"><section className="login-card" aria-labelledby="access-title">
-            <h1 id="access-title">Administrator access required</h1>
-            <p className="muted">Only administrators can manage library accounts.</p>
+            <h1 id="access-title">Staff access required</h1>
+            <p className="muted">Only administrators and librarians can create member accounts.</p>
             <Link className="secondary-button" to="/">Return to catalog</Link>
           </section></main>
           : <Login onLogin={setUser} notice={authNotice} />} />

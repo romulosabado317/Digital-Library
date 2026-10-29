@@ -248,30 +248,37 @@ test("librarian endpoints require authentication and reject member roles", async
   assert.equal(member.status, 403);
 });
 
-test("only admins can create librarian and member accounts", async () => {
+test("admins can create staff and members, while librarians can create members only", async () => {
   const app = createApiFixture();
-  const payload = {
-    fullName: "New Library Staff",
-    email: "staff@icct.edu.ph",
+  const memberPayload = {
+    fullName: "New Library Member",
+    email: "member-new@icct.edu.ph",
     password: "A unique password 12",
-    role: "LIBRARIAN",
+    role: "MEMBER",
   };
-  const anonymous = await request(app).post("/api/v1/users").send(payload);
+  const librarianPayload = { ...memberPayload, email: "staff@icct.edu.ph", role: "LIBRARIAN" };
+  const anonymous = await request(app).post("/api/v1/users").send(memberPayload);
   const librarian = await request(app)
     .post("/api/v1/users")
     .set("Cookie", `${cookieName}=${librarianToken}`)
-    .send(payload);
+    .send(memberPayload);
+  const librarianCreatingStaff = await request(app)
+    .post("/api/v1/users")
+    .set("Cookie", `${cookieName}=${librarianToken}`)
+    .send(librarianPayload);
   const member = await request(app)
     .post("/api/v1/users")
     .set("Cookie", `${cookieName}=${memberToken}`)
-    .send(payload);
+    .send(memberPayload);
   const admin = await request(app)
     .post("/api/v1/users")
     .set("Cookie", `${cookieName}=${adminToken}`)
-    .send(payload);
+    .send(librarianPayload);
 
   assert.equal(anonymous.status, 401);
-  assert.equal(librarian.status, 403);
+  assert.equal(librarian.status, 201);
+  assert.equal(librarian.body.data.user.role, "MEMBER");
+  assert.equal(librarianCreatingStaff.status, 403);
   assert.equal(member.status, 403);
   assert.equal(admin.status, 201);
   assert.equal(admin.body.data.user.role, "LIBRARIAN");

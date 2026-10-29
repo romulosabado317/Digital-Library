@@ -11,6 +11,7 @@ const initialForm = {
 };
 
 export default function AdminUserManagementPage({ user, onLogout }) {
+  const isAdmin = user.role === "ADMIN";
   const [form, setForm] = useState(initialForm);
   const [createdUser, setCreatedUser] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -28,7 +29,10 @@ export default function AdminUserManagementPage({ user, onLogout }) {
     setCreatedUser(null);
     setSaving(true);
     try {
-      const { data } = await api.post("/users", form);
+      const { data } = await api.post("/users", {
+        ...form,
+        role: isAdmin ? form.role : "MEMBER",
+      });
       setCreatedUser(data.data.user);
       setForm(initialForm);
     } catch (requestError) {
@@ -54,7 +58,7 @@ export default function AdminUserManagementPage({ user, onLogout }) {
         </nav>
         <div className="sidebar-footer">
           <div className="avatar" aria-hidden="true">{user.fullName.slice(0, 1).toUpperCase()}</div>
-          <div className="user-summary"><strong>{user.fullName}</strong><span>admin</span></div>
+          <div className="user-summary"><strong>{user.fullName}</strong><span>{user.role.toLowerCase()}</span></div>
           <button className="icon-button" onClick={onLogout} aria-label="Sign out" title="Sign out" type="button">
             <LogOut size={17} aria-hidden="true" />
           </button>
@@ -65,7 +69,9 @@ export default function AdminUserManagementPage({ user, onLogout }) {
           <div>
             <p className="eyebrow">ICCT COLLEGE · ADMINISTRATION</p>
             <h1>Manage accounts</h1>
-            <p className="muted">Create active librarian and member accounts for the college library.</p>
+            <p className="muted">{isAdmin
+              ? "Create active librarian and member accounts for the college library."
+              : "Create active member accounts for the college library."}</p>
           </div>
           <Link className="secondary-button" to="/">Browse catalog</Link>
         </header>
@@ -73,7 +79,9 @@ export default function AdminUserManagementPage({ user, onLogout }) {
           <article className="panel">
             <div className="panel-heading">
               <div className="heading-icon soft"><UserPlus size={20} aria-hidden="true" /></div>
-              <div><h2>Create account</h2><p>Only administrators can add users.</p></div>
+              <div><h2>Create account</h2><p>{isAdmin
+                ? "Administrators can add librarians and members."
+                : "Librarians can add members only."}</p></div>
             </div>
             <form className="form-stack" onSubmit={createUser}>
               <label htmlFor="account-full-name">Full name</label>
@@ -98,9 +106,9 @@ export default function AdminUserManagementPage({ user, onLogout }) {
                 value={form.email}
               />
               <label htmlFor="account-role">Account type</label>
-              <select id="account-role" name="role" onChange={updateField} value={form.role}>
+              <select disabled={!isAdmin} id="account-role" name="role" onChange={updateField} value={form.role}>
                 <option value="MEMBER">Member</option>
-                <option value="LIBRARIAN">Librarian</option>
+                {isAdmin && <option value="LIBRARIAN">Librarian</option>}
               </select>
               <label htmlFor="account-password">Temporary password</label>
               <input
@@ -141,7 +149,9 @@ export default function AdminUserManagementPage({ user, onLogout }) {
                 <h3>Before you create an account</h3>
                 <ul>
                   <li>Confirm the person’s name and email address.</li>
-                  <li>Choose Member for borrowers or Librarian for authorized staff.</li>
+                  <li>{isAdmin
+                    ? "Choose Member for borrowers or Librarian for authorized staff."
+                    : "Librarians can create Member accounts only."}</li>
                   <li>Use a unique password and communicate it privately.</li>
                 </ul>
                 <p className="empty-note">Administrator accounts cannot be created from this page.</p>
