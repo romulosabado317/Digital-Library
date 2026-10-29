@@ -51,6 +51,8 @@ function createApiFixture({
   ]);
   const sessionDeleteCalls = [];
   const sessionCreateCalls = [];
+  const copyCreateCalls = [];
+  const auditLogCalls = [];
   const activeLoan = {
     id: "loan-1",
     userId: "member-1",
@@ -124,12 +126,14 @@ function createApiFixture({
       count: async () => 0,
       create: async ({ data }) => {
         if (duplicateCopyIdentifier) {
+          copyCreateCalls.push(data);
           throw Object.assign(new Error("Unique constraint failed"), {
             code: "P2002",
             meta: { target: ["accessionNumber"] },
           });
         }
-        return { id: "copy-2", ...data };
+        copyCreateCalls.push(data);
+        return { id: `copy-${copyCreateCalls.length + 1}`, ...data, copyStatus: "AVAILABLE" };
       },
     },
     loan: {
@@ -146,7 +150,12 @@ function createApiFixture({
       updateMany: async () => ({ count: 1 }),
     },
     notification: { create: async () => ({ id: "notification-1" }) },
-    auditLog: { create: async () => ({ id: "audit-1" }) },
+    auditLog: {
+      create: async (args) => {
+        auditLogCalls.push(args);
+        return { id: "audit-1" };
+      },
+    },
     resource: {
       findFirst: async ({ where }) => (
         where.status === "ACTIVE"
@@ -264,6 +273,8 @@ function createApiFixture({
   app.locals.testUsers = users;
   app.locals.sessionDeleteCalls = sessionDeleteCalls;
   app.locals.sessionCreateCalls = sessionCreateCalls;
+  app.locals.copyCreateCalls = copyCreateCalls;
+  app.locals.auditLogCalls = auditLogCalls;
   return app;
 }
 
@@ -626,6 +637,35 @@ test("librarians can add physical copies but members cannot", async () => {
   assert.equal(staff.status, 201);
   assert.equal(staff.body.data.copy.accessionNumber, payload.accessionNumber);
   assert.equal(member.status, 403);
+});
+
+test("staff can add a batch of uniquely numbered physical copies", async () => {
+  const app = createApiFixture();
+  const response = await request(app)
+    .post("/api/v1/resources/resource-1/copies")
+    .set("Cookie", `${cookieName}=${librarianToken}`)
+    .send({ accessionPrefix: "BOOK-", startingNumber: 1, quantity: 3 });
+
+  assert.equal(response.status, 201);
+  assert.deepEqual(
+    response.body.data.copies.map((copy) => copy.accessionNumber),
+    ["BOOK-001", "BOOK-002", "BOOK-003"],
+  );
+  assert.equal(response.body.data.copies.length, 3);
+  assert.equal(app.locals.copyCreateCalls.length, 3);
+  assert.equal(app.locals.auditLogCalls.length, 3);
+});
+
+test("batch copy creation rejects quantities over 100 before database writes", async () => {
+  const app = createApiFixture();
+  const response = await request(app)
+    .post("/api/v1/resources/resource-1/copies")
+    .set("Cookie", `${cookieName}=${librarianToken}`)
+    .send({ accessionPrefix: "BOOK-", startingNumber: 1, quantity: 101 });
+
+  assert.equal(response.status, 400);
+  assert.equal(response.body.error.code, "VALIDATION_ERROR");
+  assert.equal(app.locals.copyCreateCalls.length, 0);
 });
 
 test("duplicate copy accession numbers return an actionable conflict", async () => {
