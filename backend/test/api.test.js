@@ -8,6 +8,7 @@ import { hashSessionToken } from "../src/middleware/authenticate.js";
 const cookieName = "digital_library_session";
 const librarianToken = "test-librarian-session";
 const memberToken = "test-member-session";
+const adminToken = "test-admin-session";
 
 function createApiFixture({ activeReservationCount = 0 } = {}) {
   const users = {
@@ -25,10 +26,18 @@ function createApiFixture({ activeReservationCount = 0 } = {}) {
       role: "MEMBER",
       accountStatus: "ACTIVE",
     },
+    "admin-1": {
+      id: "admin-1",
+      fullName: "Library Administrator",
+      email: "admin@example.test",
+      role: "ADMIN",
+      accountStatus: "ACTIVE",
+    },
   };
   const sessions = new Map([
     [hashSessionToken(librarianToken), users["librarian-1"]],
     [hashSessionToken(memberToken), users["member-1"]],
+    [hashSessionToken(adminToken), users["admin-1"]],
   ]);
   const activeLoan = {
     id: "loan-1",
@@ -61,7 +70,16 @@ function createApiFixture({ activeReservationCount = 0 } = {}) {
   };
   const tx = {
     user: {
-      findUnique: async ({ where }) => users[where.id] ?? null,
+      findUnique: async ({ where }) => where.id
+        ? users[where.id] ?? null
+        : Object.values(users).find((user) => user.email === where.email) ?? null,
+      create: async ({ data }) => ({
+        id: "managed-user-1",
+        fullName: data.fullName,
+        email: data.email,
+        role: data.role,
+        accountStatus: data.accountStatus,
+      }),
     },
     physicalCopy: {
       findUnique: async () => ({
@@ -99,9 +117,12 @@ function createApiFixture({ activeReservationCount = 0 } = {}) {
   };
   const prisma = {
     user: {
-      findUnique: async ({ where }) => where.email === "librarian@example.test"
-        ? { ...users["librarian-1"], passwordHash: await bcrypt.hash("correct-password", 4) }
-        : null,
+      findUnique: async ({ where }) => {
+        if (where.email === "librarian@example.test") {
+          return { ...users["librarian-1"], passwordHash: await bcrypt.hash("correct-password", 4) };
+        }
+        return Object.values(users).find((user) => user.email === where.email) ?? null;
+      },
       findMany: async () => [{
         id: "member-1",
         fullName: "Demo Member",
@@ -203,6 +224,61 @@ test("librarian endpoints require authentication and reject member roles", async
     .set("Cookie", `${cookieName}=${memberToken}`);
   assert.equal(anonymous.status, 401);
   assert.equal(member.status, 403);
+});
+
+test("only admins can create librarian and member accounts", async () => {
+  const app = createApiFixture();
+  const payload = {
+    fullName: "New Library Staff",
+    email: "staff@icct.edu.ph",
+    password: "A unique password 12",
+    role: "LIBRARIAN",
+  };
+  const anonymous = await request(app).post("/api/v1/users").send(payload);
+  const librarian = await request(app)
+    .post("/api/v1/users")
+    .set("Cookie", `${cookieName}=${librarianToken}`)
+    .send(payload);
+  const member = await request(app)
+    .post("/api/v1/users")
+    .set("Cookie", `${cookieName}=${memberToken}`)
+    .send(payload);
+  const admin = await request(app)
+    .post("/api/v1/users")
+    .set("Cookie", `${cookieName}=${adminToken}`)
+    .send(payload);
+
+  assert.equal(anonymous.status, 401);
+  assert.equal(librarian.status, 403);
+  assert.equal(member.status, 403);
+  assert.equal(admin.status, 201);
+  assert.equal(admin.body.data.user.role, "LIBRARIAN");
+  assert.equal(Object.hasOwn(admin.body.data.user, "passwordHash"), false);
+});
+
+test("account creation rejects invalid roles and malformed account data", async () => {
+  const app = createApiFixture();
+  const invalidRole = await request(app)
+    .post("/api/v1/users")
+    .set("Cookie", `${cookieName}=${adminToken}`)
+    .send({
+      fullName: "Another Administrator",
+      email: "other@example.test",
+      password: "A unique password 12",
+      role: "ADMIN",
+    });
+  const shortPassword = await request(app)
+    .post("/api/v1/users")
+    .set("Cookie", `${cookieName}=${adminToken}`)
+    .send({
+      fullName: "New Member",
+      email: "new@example.test",
+      password: "short7!",
+      role: "MEMBER",
+    });
+
+  assert.equal(invalidRole.status, 400);
+  assert.equal(shortPassword.status, 400);
 });
 
 test("authenticated staff can load member and available-copy options", async () => {

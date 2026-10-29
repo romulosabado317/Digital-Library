@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
-import { ArrowRight, BookOpen, Check, ChevronLeft, ChevronRight, LibraryBig, LogOut, Search, ShieldCheck } from "lucide-react";
-import { Link, NavLink, Route, Routes, useParams } from "react-router-dom";
+import { ArrowRight, BookOpen, Check, ChevronLeft, ChevronRight, LibraryBig, LogOut, Search, ShieldCheck, UserPlus } from "lucide-react";
+import { Link, NavLink, Route, Routes, useNavigate, useParams } from "react-router-dom";
+import AdminUserManagementPage from "./components/AdminUserManagementPage.jsx";
 import { api } from "./services/api.js";
 
 function Login({ onLogin, notice }) {
+  const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -16,6 +18,7 @@ function Login({ onLogin, notice }) {
     try {
       const { data } = await api.post("/auth/login", { email, password });
       onLogin(data.data.user);
+      navigate("/");
     } catch (requestError) {
       setError(requestError.response?.data?.error?.message ?? "Unable to sign in. Please try again.");
     } finally {
@@ -65,11 +68,12 @@ function Login({ onLogin, notice }) {
   );
 }
 
-function CatalogPage({ user }) {
+function CatalogPage({ user, onLogout }) {
   const [search, setSearch] = useState("");
   const [resourceType, setResourceType] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [categories, setCategories] = useState([]);
+  const [categoryError, setCategoryError] = useState("");
   const [resources, setResources] = useState([]);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -104,11 +108,19 @@ function CatalogPage({ user }) {
     }
   }
 
+  async function loadCategories() {
+    setCategoryError("");
+    try {
+      const { data } = await api.get("/categories");
+      setCategories(data.data);
+    } catch {
+      setCategoryError("Resource categories could not be loaded.");
+    }
+  }
+
   useEffect(() => {
     void loadResources({ nextPage: 1 });
-    api.get("/categories")
-      .then(({ data }) => setCategories(data.data))
-      .catch(() => setError("Resource categories could not be loaded."));
+    void loadCategories();
   }, []);
 
   function submitSearch(event) {
@@ -131,18 +143,29 @@ function CatalogPage({ user }) {
   return (
     <main className="catalog-page">
       <header className="catalog-header">
-        <Link className="catalog-brand" to="/"><span className="sidebar-mark"><LibraryBig size={21} aria-hidden="true" /></span> Digital Library</Link>
+        <Link className="catalog-brand" to="/">
+          <span className="sidebar-mark"><LibraryBig size={21} aria-hidden="true" /></span>
+          <span className="catalog-brand-label">ICCT College Library<small>Digital learning resources</small></span>
+        </Link>
         <nav aria-label="Catalog navigation" className="catalog-nav">
-          <Link to="/catalog" aria-current="page">Catalog</Link>
-          {user?.role === "MEMBER"
-            ? <Link to="/my-loans">My account</Link>
-            : <Link to="/">Sign in</Link>}
+          <NavLink end to="/">Catalog</NavLink>
+          {user?.role === "MEMBER" && <Link to="/my-loans">My account</Link>}
+          {["ADMIN", "LIBRARIAN"].includes(user?.role) && (
+            <>
+              <Link to="/staff/loans">Loan desk</Link>
+              <Link to="/manage/resources">Resources</Link>
+              {user.role === "ADMIN" && <Link to="/manage/users">Accounts</Link>}
+            </>
+          )}
+          {!user
+            ? <Link to="/sign-in">Sign in</Link>
+            : <button className="catalog-signout" onClick={onLogout} type="button">Sign out</button>}
         </nav>
       </header>
       <section className="catalog-hero">
-        <p className="eyebrow">DISCOVER LEARNING RESOURCES</p>
+        <p className="eyebrow">ICCT COLLEGE · LIBRARY CATALOG</p>
         <h1>Find your next resource</h1>
-        <p className="muted">Search the library catalog by title, description, or author.</p>
+        <p className="muted">Search the college library catalog by title, description, or author.</p>
         <form className="catalog-search" onSubmit={submitSearch} role="search">
           <label className="sr-only" htmlFor="catalog-search">Search resources</label>
           <Search size={19} aria-hidden="true" />
@@ -181,7 +204,18 @@ function CatalogPage({ user }) {
             </label>
           </div>
         </div>
-        {error && <p className="form-error" role="alert">{error}</p>}
+        {error && (
+          <div className="form-error catalog-error" role="alert">
+            {error}
+            <button className="text-button" onClick={() => void loadResources({ nextPage: 1 })} type="button">Retry catalog</button>
+          </div>
+        )}
+        {categoryError && (
+          <div className="form-error" role="alert">
+            {categoryError}
+            <button className="text-button" onClick={() => void loadCategories()} type="button">Retry categories</button>
+          </div>
+        )}
         {loading ? (
           <p className="loading-state" role="status">Loading resources...</p>
         ) : resources.length ? (
@@ -222,7 +256,7 @@ function CatalogPage({ user }) {
               </button>
             </nav>
           </>
-        ) : (
+        ) : error ? null : (
           <p className="empty-note" role="status">No resources match your search. Try another title or format.</p>
         )}
       </section>
@@ -553,18 +587,23 @@ function ResourceManagementPage({ user, onLogout }) {
     <div className="app-shell">
       <a className="skip-link" href="#main-content">Skip to main content</a>
       <aside className="sidebar">
-        <Link className="sidebar-brand" to="/" aria-label="Digital Library home">
+        <Link className="sidebar-brand" to="/" aria-label="ICCT College Library catalog">
           <span className="sidebar-mark"><LibraryBig size={21} aria-hidden="true" /></span>
-          <span>Digital Library<small>OPERATIONS & INSIGHTS</small></span>
+          <span>ICCT College Library<small>OPERATIONS & INSIGHTS</small></span>
         </Link>
         <div className="sidebar-section-label">WORKSPACE</div>
         <nav aria-label="Primary navigation">
-          <NavLink className={({ isActive }) => `nav-item${isActive ? " active" : ""}`} to="/">
+          <NavLink aria-label="Loan desk" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`} title="Loan desk" to="/staff/loans">
             <BookOpen size={18} aria-hidden="true" /> Loan desk
           </NavLink>
-          <NavLink className={({ isActive }) => `nav-item${isActive ? " active" : ""}`} to="/manage/resources">
+          <NavLink aria-label="Resource management" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`} title="Resources" to="/manage/resources">
             <LibraryBig size={18} aria-hidden="true" /> Resources
           </NavLink>
+          {user.role === "ADMIN" && (
+            <NavLink aria-label="Account management" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`} title="Accounts" to="/manage/users">
+              <UserPlus size={18} aria-hidden="true" /> Accounts
+            </NavLink>
+          )}
         </nav>
         <div className="sidebar-footer">
           <div className="avatar" aria-hidden="true">{user.fullName.slice(0, 1).toUpperCase()}</div>
@@ -577,7 +616,7 @@ function ResourceManagementPage({ user, onLogout }) {
       <main className="main-content" id="main-content">
         <header className="page-header">
           <div><p className="eyebrow">LIBRARY OPERATIONS</p><h1>Resource management</h1><p className="muted">Maintain catalog records and physical copy inventory.</p></div>
-          <Link className="secondary-button" to="/">Return to loan desk</Link>
+          <Link className="secondary-button" to="/staff/loans">Return to loan desk</Link>
         </header>
         <section className="management-grid">
           <article className="panel">
@@ -739,21 +778,22 @@ function LoanDesk({ user, onLogout }) {
     <div className="app-shell">
       <a className="skip-link" href="#main-content">Skip to main content</a>
       <aside className="sidebar">
-        <a className="sidebar-brand" href="/" aria-label="Digital Library home">
+        <Link className="sidebar-brand" to="/" aria-label="ICCT College Library catalog">
           <span className="sidebar-mark"><LibraryBig size={21} aria-hidden="true" /></span>
-          <span>Digital Library<small>OPERATIONS & INSIGHTS</small></span>
-        </a>
+          <span>ICCT College Library<small>OPERATIONS & INSIGHTS</small></span>
+        </Link>
         <div className="sidebar-section-label">WORKSPACE</div>
         <nav aria-label="Primary navigation">
-          <NavLink className={({ isActive }) => `nav-item${isActive ? " active" : ""}`} to="/">
+          <NavLink aria-label="Loan desk" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`} title="Loan desk" to="/staff/loans">
             <BookOpen size={18} aria-hidden="true" /> Loan desk
           </NavLink>
-          <NavLink className="nav-item" to="/catalog">
+          <NavLink aria-label="Catalog" className="nav-item" title="Catalog" to="/">
             <Search size={18} aria-hidden="true" /> Catalog
           </NavLink>
-          <NavLink className="nav-item" to="/manage/resources">
+          <NavLink aria-label="Resource management" className="nav-item" title="Resources" to="/manage/resources">
             <LibraryBig size={18} aria-hidden="true" /> Resources
           </NavLink>
+          {user.role === "ADMIN" && <NavLink aria-label="Account management" className="nav-item" title="Accounts" to="/manage/users"><UserPlus size={18} aria-hidden="true" /> Accounts</NavLink>}
         </nav>
         <div className="sidebar-footer">
           <div className="avatar" aria-hidden="true">{user.fullName.slice(0, 1).toUpperCase()}</div>
@@ -945,8 +985,12 @@ export default function App() {
   }
   return (
     <Routes>
-      <Route path="/catalog" element={<CatalogPage user={user} />} />
+      <Route path="/" element={<CatalogPage user={user} onLogout={logout} />} />
+      <Route path="/catalog" element={<CatalogPage user={user} onLogout={logout} />} />
       <Route path="/catalog/:id" element={<ResourceDetailPage user={user} />} />
+      <Route path="/sign-in" element={!user
+        ? <Login onLogin={setUser} notice={authNotice} />
+        : <CatalogPage user={user} onLogout={logout} />} />
       <Route path="/my-loans" element={user?.role === "MEMBER"
         ? <MemberLoansPage user={user} onLogout={logout} />
         : <Login onLogin={setUser} notice={authNotice} />} />
@@ -955,25 +999,20 @@ export default function App() {
         : user?.role === "MEMBER"
           ? <MemberLoansPage user={user} onLogout={logout} />
           : <Login onLogin={setUser} notice={authNotice} />} />
-      <Route
-        path="/"
-        element={!user
-          ? <Login onLogin={setUser} notice={authNotice} />
-          : user.role === "MEMBER"
-            ? <MemberLoansPage user={user} onLogout={logout} />
-            : ["ADMIN", "LIBRARIAN"].includes(user.role)
-            ? <LoanDesk user={user} onLogout={logout} />
-            : (
-              <main className="login-shell grid min-h-screen place-items-center">
-                <section className="login-card" aria-labelledby="access-title">
-                  <div className="brand-mark"><ShieldCheck aria-hidden="true" size={27} /></div>
-                  <h1 id="access-title">Staff access required</h1>
-                  <p className="muted">This first workspace is for administrators and librarians.</p>
-                  <button className="secondary-button" onClick={logout}>Sign out</button>
-                </section>
-              </main>
-            )}
-      />
+      <Route path="/manage/users" element={user?.role === "ADMIN"
+        ? <AdminUserManagementPage user={user} onLogout={logout} />
+        : user
+          ? <main className="login-shell"><section className="login-card" aria-labelledby="access-title">
+            <h1 id="access-title">Administrator access required</h1>
+            <p className="muted">Only administrators can manage library accounts.</p>
+            <Link className="secondary-button" to="/">Return to catalog</Link>
+          </section></main>
+          : <Login onLogin={setUser} notice={authNotice} />} />
+      <Route path="/staff/loans" element={["ADMIN", "LIBRARIAN"].includes(user?.role)
+        ? <LoanDesk user={user} onLogout={logout} />
+        : user?.role === "MEMBER"
+          ? <MemberLoansPage user={user} onLogout={logout} />
+          : <Login onLogin={setUser} notice={authNotice} />} />
       <Route
         path="*"
         element={
@@ -981,7 +1020,7 @@ export default function App() {
             <section className="login-card">
               <h1>Page not found</h1>
               <p className="muted">The page you requested does not exist in this workspace.</p>
-              <Link className="secondary-button" to="/">Return to loan desk</Link>
+              <Link className="secondary-button" to="/">Return to catalog</Link>
             </section>
           </main>
         }

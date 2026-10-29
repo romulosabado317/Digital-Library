@@ -27,7 +27,12 @@ export function errorHandler(error, _req, res, _next) {
       },
     });
   }
-  if (error?.name === "HttpError" || error?.name === "LoanError" || error?.name === "ReservationError") {
+  if (
+    error?.name === "HttpError"
+    || error?.name === "LoanError"
+    || error?.name === "ReservationError"
+    || error?.name === "UserProvisioningError"
+  ) {
     return res.status(error.status).json({
       error: { code: error.code, message: error.message },
     });

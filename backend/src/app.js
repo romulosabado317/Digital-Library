@@ -9,6 +9,7 @@ import { z } from "zod";
 import { createAuthenticate, hashSessionToken, requireAuthenticated } from "./middleware/authenticate.js";
 import { requireRole } from "./middleware/requireRole.js";
 import { issueLoan, returnLoan } from "./services/loanService.js";
+import { createManagedUser } from "./services/userProvisioningService.js";
 import {
   cancelReservation,
   createReservation,
@@ -35,6 +36,12 @@ const loanQuerySchema = z.object({
 });
 const reservationQuerySchema = z.object({
   status: z.enum(["WAITING", "AVAILABLE", "FULFILLED", "CANCELLED", "EXPIRED"]).optional(),
+});
+const managedUserSchema = z.object({
+  fullName: z.string().trim().min(1).max(120),
+  email: z.string().email().max(254).transform((email) => email.toLowerCase()),
+  password: z.string().min(8).max(128),
+  role: z.enum(["LIBRARIAN", "MEMBER"]),
 });
 
 const resourceTypes = ["BOOK", "JOURNAL", "THESIS", "MEDIA", "DIGITAL_RESOURCE"];
@@ -253,6 +260,29 @@ export function createApp({
         take: 100,
       });
       res.json({ data: users });
+    }),
+  );
+
+  app.post(
+    "/api/v1/users",
+    requireAuthenticated,
+    requireRole("ADMIN"),
+    asyncRoute(async (req, res) => {
+      const input = managedUserSchema.parse(req.body);
+      const user = await prisma.$transaction(async (tx) => {
+        const created = await createManagedUser(tx, input);
+        await tx.auditLog.create({
+          data: {
+            actorUserId: req.user.id,
+            action: "USER_CREATED",
+            entityType: "User",
+            entityId: created.id,
+            metadata: { role: created.role },
+          },
+        });
+        return created;
+      });
+      res.status(201).json({ data: { user } });
     }),
   );
 

@@ -48,13 +48,24 @@ test("creates an active admin and stores only a password hash", async () => {
   assert.equal(Object.hasOwn(calls[1].data, "password"), false);
 });
 
-test("rejects short passwords before querying or writing", async () => {
+test("rejects passwords shorter than 8 characters before querying or writing", async () => {
   const { prisma, calls } = createPrismaFixture();
   await assert.rejects(
-    createAdminUser(prisma, { email: "admin@example.test", password: "too-short" }),
+    createAdminUser(prisma, { email: "admin@example.test", password: "short7!" }),
     (error) => error instanceof AdminProvisioningError && error.code === "WEAK_PASSWORD",
   );
   assert.equal(calls.length, 0);
+});
+
+test("accepts an 8-character admin password", async () => {
+  const { prisma, calls } = createPrismaFixture();
+  const admin = await createAdminUser(prisma, {
+    email: "admin@example.test",
+    password: "GoodPass8",
+  });
+
+  assert.equal(admin.role, "ADMIN");
+  assert.equal(await bcrypt.compare("GoodPass8", calls[1].data.passwordHash), true);
 });
 
 test("does not overwrite an existing account", async () => {

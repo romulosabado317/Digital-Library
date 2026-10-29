@@ -21,13 +21,15 @@ Core relationships: `User` owns sessions, loans, reservations, notifications, an
 - Staff active-loan list with return processing, plus a member loan endpoint scoped to the authenticated user.
 - Member reservation queues with duplicate protection, cancellation, FIFO promotion on return, a 48-hour pickup hold, and activity-driven expiry processing. Staff can inspect ready reservations and issue the held copy only to its member.
 - Reservation queue creation, cancellation, expiry, copy promotion, and loan fulfillment run in serializable database transactions; active reservations block resource archival.
-- Public resource catalog with title/description/author search, format/category filters, pagination, resource details, and public metadata that omits private digital file links.
+- Public resource catalog is the homepage, with title/description/author search, format/category filters, pagination, resource details, and public metadata that omits private digital file links.
 - Librarian resource management UI and API for creating/updating/archive catalog records and adding physical copies; archive preserves historical loan records.
+- Admin-only account management for creating active librarian and member accounts with server-side password hashing and audit logging.
+- Clearly labeled synthetic ICCT-context catalog examples for prototype use; these are not official ICCT College holdings.
 - Responsive, keyboard-accessible login, catalog, member-loan view, and staff operations interfaces with loading, empty, success, and error states.
 - Synthetic seed records only; no real student data.
 - Backend API/service tests and a Prisma PostgreSQL schema/migration, including constraints/indexes and a partial unique index preventing concurrent active loans.
 
-Full administrative user management, a general notifications inbox, analytics dashboards, reports/CSV, password recovery, complete OpenAPI documentation, and live deployment remain later implementation slices. This milestone is not a claim that the full specification is complete.
+A general notifications inbox, analytics dashboards, reports/CSV, password recovery, complete OpenAPI documentation, and verified live deployment remain later implementation slices. This milestone is not a claim that the full specification is complete.
 
 ## Local development
 
@@ -45,6 +47,8 @@ Requirements: Node.js 20.19+ and npm. A PostgreSQL database is required; the API
    npm run db:seed
    ```
 
+`npm run db:seed` also adds four clearly marked synthetic sample records in Information Technology, Business and Management, Education, and General Education. These examples demonstrate the ICCT College library catalog and must not be treated as official holdings. The seed is safe to rerun and does not overwrite existing matching sample records.
+
 5. Start both applications:
 
    ```powershell
@@ -53,11 +57,11 @@ Requirements: Node.js 20.19+ and npm. A PostgreSQL database is required; the API
 
 The frontend is served at `http://localhost:5173`; the API listens on port `4000`. Vite proxies `/api` requests to the local backend. `backend\.env.example` contains only placeholders. Change the demonstration passwords before seeding and do not use them for real accounts.
 
-To create the first administrator directly in the configured database, first apply migrations with `npm run db:deploy`. In PowerShell, from the project root, enter the admin email and a new 16+ character password without placing the password in shell history:
+To create the first administrator directly in the configured database, first apply migrations with `npm run db:deploy`. In PowerShell, from the project root, enter the admin email and a new, unique password with at least 8 characters without placing the password in shell history:
 
 ```powershell
 $env:ADMIN_EMAIL = Read-Host "Admin email"
-$securePassword = Read-Host "New admin password (16+ characters)" -AsSecureString
+$securePassword = Read-Host "New unique admin password (8+ characters)" -AsSecureString
 $passwordPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword)
 try {
   $env:ADMIN_PASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($passwordPointer)
@@ -80,6 +84,7 @@ The command reads `DATABASE_URL` from `backend\.env`, creates an `ADMIN` account
 | `POST` | `/api/v1/auth/logout` | Public | Revoke the current session, if present |
 | `GET` | `/api/v1/auth/me` | Authenticated | Return the current user |
 | `GET` | `/api/v1/users` | Admin/librarian | List active members for the loan desk |
+| `POST` | `/api/v1/users` | Admin only | Create a librarian or member account |
 | `GET` | `/api/v1/resources` | Public | Search/filter active catalog with page metadata |
 | `GET` | `/api/v1/resources/:id` | Public | View active resource details; private digital URL omitted |
 | `POST` | `/api/v1/resources` | Admin/librarian | Create a catalog record |

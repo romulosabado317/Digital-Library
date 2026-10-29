@@ -1,6 +1,7 @@
 import "dotenv/config";
 import bcrypt from "bcryptjs";
 import { PrismaClient } from "@prisma/client";
+import { seedDemoCatalog } from "../src/services/demoCatalogSeed.js";
 
 const prisma = new PrismaClient();
 
@@ -77,7 +78,8 @@ async function seed() {
     },
   });
 
-  console.log("Seeded synthetic demonstration users, a resource, and a physical copy.");
+  const { created: sampleCount } = await seedDemoCatalog(prisma);
+  console.log(`Seeded synthetic demonstration users, catalog records (${sampleCount} new samples), and a physical copy.`);
 }
 
 seed()

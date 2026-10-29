@@ -17,8 +17,8 @@ export async function createAdminUser(prisma, {
   if (!normalizedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
     throw new AdminProvisioningError("INVALID_EMAIL", "A valid admin email address is required.");
   }
-  if (typeof password !== "string" || password.length < 16) {
-    throw new AdminProvisioningError("WEAK_PASSWORD", "Use a unique admin password with at least 16 characters.");
+  if (typeof password !== "string" || password.length < 8) {
+    throw new AdminProvisioningError("WEAK_PASSWORD", "Use a unique admin password with at least 8 characters.");
   }
   if (typeof fullName !== "string" || !fullName.trim() || fullName.trim().length > 120) {
     throw new AdminProvisioningError("INVALID_NAME", "Admin name must be between 1 and 120 characters.");
