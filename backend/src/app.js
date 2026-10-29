@@ -11,6 +11,7 @@ import { requireRole } from "./middleware/requireRole.js";
 import { issueLoan, returnLoan } from "./services/loanService.js";
 import { createManagedUser } from "./services/userProvisioningService.js";
 import {
+  approveReservation,
   cancelReservation,
   createReservation,
   expireReservations,
@@ -391,7 +392,10 @@ export function createApp({
       const copies = await prisma.physicalCopy.findMany({
         where: {
           ...(status ? { copyStatus: status } : {}),
-          resource: { status: "ACTIVE" },
+          resource: {
+            status: "ACTIVE",
+            ...(status === "AVAILABLE" ? { reservations: { none: { status: "WAITING" } } } : {}),
+          },
         },
         include: {
           resource: { select: { id: true, title: true, isbn: true } },
@@ -425,10 +429,20 @@ export function createApp({
     if (!resource) {
       throw new HttpError(404, "RESOURCE_NOT_FOUND", "The requested resource was not found.");
     }
-    const availableCopies = await prisma.physicalCopy.count({
-      where: { resourceId: id, copyStatus: "AVAILABLE" },
+    const [availableCopies, waitingReservations] = await Promise.all([
+      prisma.physicalCopy.count({
+        where: { resourceId: id, copyStatus: "AVAILABLE" },
+      }),
+      prisma.reservation.count({
+        where: { resourceId: id, status: "WAITING" },
+      }),
+    ]);
+    res.json({
+      data: {
+        resource,
+        availableCopies: waitingReservations > 0 ? 0 : availableCopies,
+      },
     });
-    res.json({ data: { resource, availableCopies } });
   }));
 
   app.post(
@@ -751,6 +765,21 @@ export function createApp({
         take: 200,
       });
       res.json({ data: reservations });
+    }),
+  );
+
+  app.post(
+    "/api/v1/reservations/:id/approve",
+    requireAuthenticated,
+    requireRole("ADMIN", "LIBRARIAN"),
+    asyncRoute(async (req, res) => {
+      const reservationId = z.string().min(1).max(64).parse(req.params.id);
+      await expireReservations(prisma);
+      const reservation = await approveReservation(prisma, {
+        reservationId,
+        approvedBy: req.user.id,
+      });
+      res.json({ data: { reservation } });
     }),
   );
 

@@ -767,6 +767,7 @@ function LoanDesk({ user, onLogout }) {
   const [memberId, setMemberId] = useState("");
   const [copyId, setCopyId] = useState("");
   const [returningId, setReturningId] = useState("");
+  const [approvingReservationId, setApprovingReservationId] = useState("");
   const [issuingReservationId, setIssuingReservationId] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -836,6 +837,21 @@ function LoanDesk({ user, onLogout }) {
     }
   }
 
+  async function approveWaitingReservation(reservation) {
+    setMessage("");
+    setError("");
+    setApprovingReservationId(reservation.id);
+    try {
+      await api.post(`/reservations/${reservation.id}/approve`);
+      setMessage(`Reservation approved for ${reservation.user.fullName}. The copy is ready for pickup.`);
+      await loadDesk();
+    } catch (requestError) {
+      setError(requestError.response?.data?.error?.message ?? "The reservation could not be approved.");
+    } finally {
+      setApprovingReservationId("");
+    }
+  }
+
   async function issueReservedLoan(reservation) {
     setMessage("");
     setError("");
@@ -845,7 +861,7 @@ function LoanDesk({ user, onLogout }) {
         memberId: reservation.userId,
         copyId: reservation.physicalCopyId,
       });
-      setMessage(`Reserved loan issued to ${reservation.user.fullName}. Due ${new Date(data.data.loan.dueAt).toLocaleDateString()}.`);
+      setMessage(`Pickup confirmed for ${reservation.user.fullName}. Due ${new Date(data.data.loan.dueAt).toLocaleDateString()}.`);
       await loadDesk();
     } catch (requestError) {
       setError(requestError.response?.data?.error?.message ?? "The reserved loan could not be issued.");
@@ -951,7 +967,7 @@ function LoanDesk({ user, onLogout }) {
         <section className="panel loans-panel" aria-labelledby="ready-reservations-title">
           <div className="panel-heading">
             <div className="heading-icon soft"><LibraryBig size={20} aria-hidden="true" /></div>
-            <div><h2 id="ready-reservations-title">Reservations ready for pickup</h2><p>Issue each held copy to the member it is reserved for.</p></div>
+            <div><h2 id="ready-reservations-title">Reservations ready for pickup</h2><p>Confirm pickup to issue the held copy to its member.</p></div>
           </div>
           {loading ? <p className="loading-state" role="status">Loading ready reservations...</p>
             : readyReservations.length ? (
@@ -972,7 +988,7 @@ function LoanDesk({ user, onLogout }) {
                         onClick={() => void issueReservedLoan(reservation)}
                         type="button"
                       >
-                        {issuingReservationId === reservation.id ? "Issuing..." : "Issue reserved loan"}
+                        {issuingReservationId === reservation.id ? "Confirming..." : "Confirm pickup"}
                       </button>
                     </div>
                   </article>
@@ -996,6 +1012,14 @@ function LoanDesk({ user, onLogout }) {
                         <span>{reservation.user.fullName} · Queue position {reservation.queuePosition}</span>
                         <span>Requested {new Date(reservation.reservedAt).toLocaleDateString()}</span>
                       </div>
+                      <button
+                        className="small-button"
+                        disabled={approvingReservationId === reservation.id}
+                        onClick={() => void approveWaitingReservation(reservation)}
+                        type="button"
+                      >
+                        {approvingReservationId === reservation.id ? "Approving..." : "Approve reservation"}
+                      </button>
                     </div>
                   </article>
                 ))}

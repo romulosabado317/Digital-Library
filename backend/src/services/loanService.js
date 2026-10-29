@@ -1,5 +1,3 @@
-import { promoteNextReservation, ReservationError } from "./reservationService.js";
-
 export class LoanError extends Error {
   constructor(code, message, status = 400) {
     super(message);
@@ -51,6 +49,18 @@ export async function issueLoan(prisma, { memberId, copyId, issuedBy, now = new 
         }
       } else if (copy.copyStatus !== "AVAILABLE") {
         throw new LoanError("COPY_UNAVAILABLE", "This copy is not available for borrowing.", 409);
+      } else {
+        const waitingReservation = await tx.reservation.findFirst({
+          where: { resourceId: copy.resource.id, status: "WAITING" },
+          select: { id: true },
+        });
+        if (waitingReservation) {
+          throw new LoanError(
+            "WAITING_RESERVATION",
+            "Approve the next reservation before issuing this copy to another member.",
+            409,
+          );
+        }
       }
 
       const claim = await tx.physicalCopy.updateMany({
@@ -149,20 +159,6 @@ export async function returnLoan(prisma, { loanId, returnedBy, now = new Date() 
       if (release.count !== 1) {
         throw new LoanError("INVENTORY_CONFLICT", "The physical copy is not marked as on loan.", 409);
       }
-      try {
-        await promoteNextReservation(tx, {
-          resourceId: loan.physicalCopy.resourceId,
-          copyId: loan.physicalCopyId,
-          now,
-          actorUserId: returnedBy,
-        });
-      } catch (error) {
-        if (error instanceof ReservationError) {
-          throw new LoanError(error.code, error.message, error.status);
-        }
-        throw error;
-      }
-
       await tx.notification.create({
         data: {
           userId: loan.userId,

@@ -19,8 +19,8 @@ Core relationships: `User` owns sessions, loans, reservations, notifications, an
 - Transactional loan creation that verifies member status and resource/copy availability, claims the copy conditionally, creates an in-app notification, and writes an audit record.
 - Transactional return processing that supports overdue loans, releases inventory, notifies the member, and writes an audit record.
 - Staff active-loan list with return processing, plus a member loan endpoint scoped to the authenticated user.
-- Member reservation queues with duplicate protection, cancellation, FIFO promotion on return, a 48-hour pickup hold, and activity-driven expiry processing. The staff loan desk shows both waiting reservations and ready pickup holds; staff can issue a held copy only to its reserved member.
-- Reservation queue creation, cancellation, expiry, copy promotion, and loan fulfillment run in serializable database transactions; active reservations block resource archival.
+- Member reservation queues with duplicate protection, cancellation, FIFO staff approval, a 48-hour pickup hold, and activity-driven expiry processing. Waiting reservations require staff approval before a copy is held; staff can issue a held copy only to its reserved member.
+- Reservation queue creation, cancellation, expiry, staff copy approval, and loan fulfillment run in serializable database transactions; active reservations block resource archival.
 - Public resource catalog is the homepage, with title/description/author search, format/category filters, pagination, resource details, and public metadata that omits private digital file links.
 - Librarian resource management UI and API for creating/updating/archive catalog records and adding physical copies in batches; each copy gets a unique accession number, and archive preserves historical loan records.
 - Account management lets administrators create librarian and member accounts, while librarians can create member accounts only; passwords are hashed server-side and creations are audit logged.
@@ -99,12 +99,13 @@ The command reads `DATABASE_URL` from `backend\.env`, creates an `ADMIN` account
 | `GET` | `/api/v1/loans` | Admin/librarian | List loans with an optional status filter |
 | `GET` | `/api/v1/loans/me` | Authenticated | List the current user's own loan history |
 | `POST` | `/api/v1/loans/:id/return` | Admin/librarian | Process a return and release its copy atomically |
-| `POST` | `/api/v1/reservations` | Member | Join the FIFO queue for a resource with no available copies |
+| `POST` | `/api/v1/reservations` | Member | Join the FIFO queue when no copy is immediately borrowable |
 | `GET` | `/api/v1/reservations/me` | Member | View and expire-check the current member's reservations |
 | `GET` | `/api/v1/reservations` | Admin/librarian | Inspect reservation queues, optionally by status |
-| `DELETE` | `/api/v1/reservations/:id` | Reservation owner or staff | Cancel a waiting/ready reservation and promote the next member |
+| `POST` | `/api/v1/reservations/:id/approve` | Admin/librarian | Approve the first waiting reservation and hold an available copy |
+| `DELETE` | `/api/v1/reservations/:id` | Reservation owner or staff | Cancel a waiting/ready reservation and release any held copy |
 
-Returns promote the next waiting member to `AVAILABLE`, reserve the returned copy for 48 hours, and create an in-app notification. Expired holds are released and promoted when a member or staff reservation list is requested. Staff loan issuance fulfills a ready hold only when the borrower matches the reserved member. Responses use `{ "data": ... }` on success and `{ "error": { "code": ..., "message": ... } }` on errors. Catalog list query supports `search`, `categoryId`, `authorId`, `resourceType`, `page`, and `limit`. The full endpoint set in the original specification is not implemented yet.
+Staff approve waiting reservations in FIFO order when a copy is available; approval holds that copy for pickup for 48 hours and creates an in-app notification. Returns, cancellations, and expired holds release copies without automatically advancing the queue; staff approve the next waiting member. Public availability stays at zero while a waiting queue needs staff action. Staff loan issuance fulfills a ready hold only when the borrower matches the reserved member. Responses use `{ "data": ... }` on success and `{ "error": { "code": ..., "message": ... } }` on errors. Catalog list query supports `search`, `categoryId`, `authorId`, `resourceType`, `page`, and `limit`. The full endpoint set in the original specification is not implemented yet.
 
 ## Database and backups
 

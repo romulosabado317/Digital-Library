@@ -10,56 +10,84 @@ export class ReservationError extends Error {
   }
 }
 
-export async function promoteNextReservation(tx, {
-  resourceId,
-  copyId,
-  now,
-  actorUserId,
+export async function approveReservation(prisma, {
+  reservationId,
+  approvedBy,
+  now = new Date(),
 }) {
-  const next = await tx.reservation.findFirst({
-    where: { resourceId, status: "WAITING" },
-    orderBy: [{ queuePosition: "asc" }, { reservedAt: "asc" }],
-    select: { id: true, userId: true },
-  });
-  if (!next) return null;
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const reservation = await tx.reservation.findUnique({
+        where: { id: reservationId },
+      });
+      if (!reservation) {
+        throw new ReservationError("RESERVATION_NOT_FOUND", "The reservation was not found.", 404);
+      }
+      if (reservation.status !== "WAITING") {
+        throw new ReservationError("RESERVATION_NOT_WAITING", "Only waiting reservations can be approved.", 409);
+      }
 
-  const expiresAt = new Date(now.getTime() + HOLD_PERIOD_HOURS * 60 * 60 * 1000);
-  const claim = await tx.reservation.updateMany({
-    where: { id: next.id, status: "WAITING" },
-    data: { status: "AVAILABLE", physicalCopyId: copyId, expiresAt },
-  });
-  if (claim.count !== 1) {
-    throw new ReservationError("RESERVATION_CONFLICT", "The reservation queue changed. Retry the operation.", 409);
-  }
+      const firstInQueue = await tx.reservation.findFirst({
+        where: { resourceId: reservation.resourceId, status: "WAITING" },
+        orderBy: [{ queuePosition: "asc" }, { reservedAt: "asc" }],
+        select: { id: true },
+      });
+      if (firstInQueue?.id !== reservation.id) {
+        throw new ReservationError("RESERVATION_NOT_NEXT", "Approve the first member in the reservation queue.", 409);
+      }
 
-  const copyClaim = await tx.physicalCopy.updateMany({
-    where: { id: copyId, copyStatus: "AVAILABLE" },
-    data: { copyStatus: "RESERVED" },
-  });
-  if (copyClaim.count !== 1) {
-    throw new ReservationError("INVENTORY_CONFLICT", "The copy could not be reserved for the next member.", 409);
-  }
+      const copy = await tx.physicalCopy.findFirst({
+        where: { resourceId: reservation.resourceId, copyStatus: "AVAILABLE" },
+        orderBy: { accessionNumber: "asc" },
+        select: { id: true },
+      });
+      if (!copy) {
+        throw new ReservationError("COPY_UNAVAILABLE", "No copy is available to approve for pickup yet.", 409);
+      }
 
-  await tx.notification.create({
-    data: {
-      userId: next.userId,
-      title: "Reserved resource is ready",
-      message: `Your reserved resource is ready for pickup until ${expiresAt.toISOString().slice(0, 10)}.`,
-      notificationType: "RESERVATION_AVAILABLE",
-    },
-  });
-  if (actorUserId) {
-    await tx.auditLog.create({
-      data: {
-        actorUserId,
-        action: "RESERVATION_AVAILABLE",
-        entityType: "Reservation",
-        entityId: next.id,
-        metadata: { resourceId, copyId },
-      },
-    });
+      const expiresAt = new Date(now.getTime() + HOLD_PERIOD_HOURS * 60 * 60 * 1000);
+      const copyClaim = await tx.physicalCopy.updateMany({
+        where: { id: copy.id, copyStatus: "AVAILABLE" },
+        data: { copyStatus: "RESERVED" },
+      });
+      if (copyClaim.count !== 1) {
+        throw new ReservationError("INVENTORY_CONFLICT", "The copy is no longer available. Refresh and try again.", 409);
+      }
+
+      const reservationClaim = await tx.reservation.updateMany({
+        where: { id: reservation.id, status: "WAITING" },
+        data: { status: "AVAILABLE", physicalCopyId: copy.id, expiresAt },
+      });
+      if (reservationClaim.count !== 1) {
+        throw new ReservationError("RESERVATION_CONFLICT", "The reservation changed. Refresh and try again.", 409);
+      }
+
+      await tx.notification.create({
+        data: {
+          userId: reservation.userId,
+          title: "Reserved resource is ready",
+          message: `Your reserved resource is ready for pickup until ${expiresAt.toISOString().slice(0, 10)}.`,
+          notificationType: "RESERVATION_AVAILABLE",
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          actorUserId: approvedBy,
+          action: "RESERVATION_AVAILABLE",
+          entityType: "Reservation",
+          entityId: reservation.id,
+          metadata: { resourceId: reservation.resourceId, copyId: copy.id },
+        },
+      });
+
+      return { ...reservation, status: "AVAILABLE", physicalCopyId: copy.id, expiresAt };
+    }, { isolationLevel: "Serializable" });
+  } catch (error) {
+    if (error?.code === "P2034" || error?.code === "P2002") {
+      throw new ReservationError("RESERVATION_CONFLICT", "The reservation queue changed. Refresh and try again.", 409);
+    }
+    throw error;
   }
-  return { ...next, status: "AVAILABLE", physicalCopyId: copyId, expiresAt };
 }
 
 export async function createReservation(prisma, { memberId, resourceId, now = new Date() }) {
@@ -87,10 +115,14 @@ export async function createReservation(prisma, { memberId, resourceId, now = ne
         throw new ReservationError("RESOURCE_NOT_RESERVABLE", "Digital resources do not use physical reservation queues.", 409);
       }
 
+      const firstWaitingReservation = await tx.reservation.findFirst({
+        where: { resourceId, status: "WAITING" },
+        select: { id: true },
+      });
       const availableCopies = await tx.physicalCopy.count({
         where: { resourceId, copyStatus: "AVAILABLE" },
       });
-      if (availableCopies > 0) {
+      if (availableCopies > 0 && !firstWaitingReservation) {
         throw new ReservationError("COPY_AVAILABLE", "A copy is available to borrow; a reservation is not needed.", 409);
       }
 
@@ -178,12 +210,6 @@ export async function cancelReservation(prisma, {
         if (release.count !== 1) {
           throw new ReservationError("INVENTORY_CONFLICT", "The reserved copy could not be released.", 409);
         }
-        await promoteNextReservation(tx, {
-          resourceId: reservation.resourceId,
-          copyId: reservation.physicalCopyId,
-          now,
-          actorUserId: actorId,
-        });
       }
 
       await tx.auditLog.create({
@@ -209,7 +235,7 @@ export async function expireReservations(prisma, { now = new Date() } = {}) {
     return await prisma.$transaction(async (tx) => {
       const expired = await tx.reservation.findMany({
         where: { status: "AVAILABLE", expiresAt: { lte: now } },
-        select: { id: true, resourceId: true, physicalCopyId: true },
+        select: { id: true, physicalCopyId: true },
         orderBy: [{ expiresAt: "asc" }, { reservedAt: "asc" }],
       });
       let expiredCount = 0;
@@ -228,11 +254,6 @@ export async function expireReservations(prisma, { now = new Date() } = {}) {
           if (release.count !== 1) {
             throw new ReservationError("INVENTORY_CONFLICT", "An expired reservation has inconsistent copy inventory.", 409);
           }
-          await promoteNextReservation(tx, {
-            resourceId: reservation.resourceId,
-            copyId: reservation.physicalCopyId,
-            now,
-          });
         }
         expiredCount += 1;
       }
