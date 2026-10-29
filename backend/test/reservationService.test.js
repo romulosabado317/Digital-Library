@@ -4,6 +4,7 @@ import {
   cancelReservation,
   createReservation,
   expireReservations,
+  approveReservation,
   ReservationError,
 } from "../src/services/reservationService.js";
 
@@ -16,6 +17,7 @@ function createReservationFixture({
   existingReservation = null,
   lastReservation = null,
   reservation = null,
+  availableCopy = null,
   nextReservation = null,
   expiredReservations = [],
   claimCount = 1,
@@ -33,6 +35,7 @@ function createReservationFixture({
     },
     physicalCopy: {
       count: async () => availableCopies,
+      findFirst: async () => availableCopy,
       updateMany: async ({ where, data }) => {
         calls.push({ type: "copy.updateMany", where, data });
         return { count: copyReleaseCount };
@@ -85,6 +88,82 @@ test("creates a member reservation at the end of the resource queue", async () =
     memberId: "member-1",
     resourceId: "resource-1",
     now: reservedAt,
+  });
+
+  test("staff approval holds an available copy for the first waiting member", async () => {
+    const firstInQueue = {
+      id: "reservation-1",
+      userId: "member-2",
+      resourceId: "resource-1",
+      queuePosition: 1,
+      status: "WAITING",
+      physicalCopyId: null,
+    };
+    const { prisma, calls } = createReservationFixture({
+      reservation: firstInQueue,
+      nextReservation: firstInQueue,
+      availableCopy: { id: "copy-1", accessionNumber: "BOOK-001" },
+    });
+    const now = new Date("2026-10-29T12:00:00.000Z");
+    const result = await approveReservation(prisma, {
+      reservationId: firstInQueue.id,
+      approvedBy: "librarian-1",
+      now,
+    });
+
+    assert.equal(result.status, "AVAILABLE");
+    assert.equal(result.physicalCopyId, "copy-1");
+    assert.equal(result.expiresAt.toISOString(), "2026-10-31T12:00:00.000Z");
+    assert.ok(calls.some(({ type, where, data }) => (
+      type === "reservation.updateMany"
+      && where.id === firstInQueue.id
+      && data.status === "AVAILABLE"
+    )));
+    assert.ok(calls.some(({ type, where, data }) => (
+      type === "copy.updateMany"
+      && where.id === "copy-1"
+      && data.copyStatus === "RESERVED"
+    )));
+    assert.ok(calls.some(({ type, data }) => (
+      type === "notification.create"
+      && data.userId === "member-2"
+      && data.notificationType === "RESERVATION_AVAILABLE"
+    )));
+    assert.equal(calls[0].options.isolationLevel, "Serializable");
+  });
+
+  test("approval rejects when the queue member is not first or no copy is available", async () => {
+    const secondInQueue = {
+      id: "reservation-2",
+      userId: "member-3",
+      resourceId: "resource-1",
+      queuePosition: 2,
+      status: "WAITING",
+      physicalCopyId: null,
+    };
+    const notFirst = createReservationFixture({
+      reservation: secondInQueue,
+      nextReservation: { ...secondInQueue, id: "reservation-1", queuePosition: 1 },
+    });
+    await assert.rejects(
+      approveReservation(notFirst.prisma, {
+        reservationId: secondInQueue.id,
+        approvedBy: "librarian-1",
+      }),
+      (error) => error instanceof ReservationError && error.code === "RESERVATION_NOT_NEXT",
+    );
+
+    const noCopy = createReservationFixture({
+      reservation: { ...secondInQueue, queuePosition: 1 },
+      nextReservation: { ...secondInQueue, queuePosition: 1 },
+    });
+    await assert.rejects(
+      approveReservation(noCopy.prisma, {
+        reservationId: secondInQueue.id,
+        approvedBy: "librarian-1",
+      }),
+      (error) => error instanceof ReservationError && error.code === "COPY_UNAVAILABLE",
+    );
   });
 
   assert.equal(result.queuePosition, 5);
@@ -160,7 +239,7 @@ test("cancelling another member's reservation is denied", async () => {
   assert.equal(calls.some(({ type }) => type === "reservation.updateMany"), false);
 });
 
-test("cancelling a ready reservation promotes the next member and keeps the copy reserved", async () => {
+test("cancelling a ready reservation releases the copy for staff approval", async () => {
   const next = {
     id: "reservation-2",
     userId: "member-3",
@@ -188,10 +267,11 @@ test("cancelling a ready reservation promotes the next member and keeps the copy
   });
 
   assert.equal(result.status, "CANCELLED");
-  assert.ok(calls.some(({ type, data }) => type === "reservation.updateMany" && data.status === "AVAILABLE"));
-  assert.ok(calls.some(({ type, data }) => type === "notification.create"
+  assert.equal(calls.some(({ type, data }) => type === "reservation.updateMany" && data.status === "AVAILABLE"), false);
+  assert.equal(calls.some(({ type, data }) => type === "notification.create"
     && data.userId === "member-3"
-    && data.notificationType === "RESERVATION_AVAILABLE"));
+    && data.notificationType === "RESERVATION_AVAILABLE"), false);
+  assert.ok(calls.some(({ type, data }) => type === "copy.updateMany" && data.copyStatus === "AVAILABLE"));
 });
 
 test("reports reservation status conflicts without changing inventory", async () => {
@@ -215,7 +295,7 @@ test("reports reservation status conflicts without changing inventory", async ()
   assert.equal(calls.some(({ type }) => type === "copy.updateMany"), false);
 });
 
-test("expiry releases the held copy and promotes the next waiting member", async () => {
+test("expiry releases the held copy and leaves the next member waiting for approval", async () => {
   const { prisma, calls } = createReservationFixture({
     expiredReservations: [{
       id: "reservation-expired",
@@ -233,7 +313,8 @@ test("expiry releases the held copy and promotes the next waiting member", async
 
   assert.equal(count, 1);
   assert.ok(calls.some(({ type, data }) => type === "reservation.updateMany" && data.status === "EXPIRED"));
-  assert.ok(calls.some(({ type, data }) => type === "reservation.updateMany" && data.status === "AVAILABLE"));
-  assert.ok(calls.some(({ type, data }) => type === "notification.create"
-    && data.userId === "member-2"));
+  assert.equal(calls.some(({ type, data }) => type === "reservation.updateMany" && data.status === "AVAILABLE"), false);
+  assert.equal(calls.some(({ type, data }) => type === "notification.create"
+    && data.userId === "member-2"), false);
+  assert.ok(calls.some(({ type, data }) => type === "copy.updateMany" && data.copyStatus === "AVAILABLE"));
 });

@@ -8,6 +8,7 @@ function createPrismaFixture({
   copyStatus = "AVAILABLE",
   resourceStatus = "ACTIVE",
   reservation = null,
+  waitingReservation = null,
 } = {}) {
   const calls = [];
   const tx = {
@@ -26,7 +27,7 @@ function createPrismaFixture({
       },
     },
     reservation: {
-      findFirst: async () => reservation,
+      findFirst: async ({ where }) => where.status === "WAITING" ? waitingReservation : reservation,
       updateMany: async ({ where, data }) => {
         calls.push({ type: "reservation.updateMany", where, data });
         return { count: 1 };
@@ -166,6 +167,22 @@ test("rejects a reserved copy when the borrower has no active hold", async () =>
     (error) => error instanceof LoanError && error.code === "COPY_RESERVED",
   );
   assert.equal(calls.some(({ type }) => type === "copy.updateMany"), false);
+});
+
+test("does not issue an available copy to another member while reservations await approval", async () => {
+  const { prisma, calls } = createPrismaFixture({
+    waitingReservation: { id: "reservation-waiting-1" },
+  });
+  await assert.rejects(
+    issueLoan(prisma, {
+      memberId: "member-1",
+      copyId: "copy-1",
+      issuedBy: "librarian-1",
+    }),
+    (error) => error instanceof LoanError && error.code === "WAITING_RESERVATION",
+  );
+  assert.equal(calls.some(({ type }) => type === "copy.updateMany"), false);
+  assert.equal(calls.some(({ type }) => type === "loan.create"), false);
 });
 
 test("rejects a concurrent issue when the conditional inventory update loses", async () => {

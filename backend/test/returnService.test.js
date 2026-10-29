@@ -78,20 +78,18 @@ test("returns an overdue loan, releases the copy, and records the return atomica
   assert.equal(calls[0].options.isolationLevel, "Serializable");
 });
 
-test("return promotes the next waiting member and reserves the returned copy", async () => {
+test("return leaves the copy available until staff approves the next waiting reservation", async () => {
   const { prisma, calls } = createReturnFixture({
     nextReservation: { id: "reservation-1", userId: "member-2" },
   });
   await returnLoan(prisma, { loanId: "loan-1", returnedBy: "librarian-1" });
 
-  assert.ok(calls.some(({ type, data }) => type === "reservation.updateMany"
-    && data.status === "AVAILABLE"
-    && data.physicalCopyId === "copy-1"));
-  assert.ok(calls.some(({ type, data }) => type === "notification.create"
+  assert.equal(calls.some(({ type }) => type === "reservation.updateMany"), false);
+  assert.equal(calls.some(({ type, data }) => type === "notification.create"
     && data.userId === "member-2"
-    && data.notificationType === "RESERVATION_AVAILABLE"));
+    && data.notificationType === "RESERVATION_AVAILABLE"), false);
   assert.ok(calls.some(({ type, data }) => type === "copy.updateMany" && data.copyStatus === "AVAILABLE"));
-  assert.ok(calls.some(({ type, data }) => type === "copy.updateMany" && data.copyStatus === "RESERVED"));
+  assert.equal(calls.some(({ type, data }) => type === "copy.updateMany" && data.copyStatus === "RESERVED"), false);
 });
 
 test("rejects a loan that does not exist", async () => {
