@@ -350,6 +350,8 @@ test("librarians can create resources, but members cannot", async () => {
     title: "New Library Resource",
     resourceType: "BOOK",
     publicationYear: 2024,
+    publisherName: "Example Press",
+    authorNames: ["Example Author"],
   };
   const app = createApiFixture();
   const staff = await request(app)
@@ -362,6 +364,22 @@ test("librarians can create resources, but members cannot", async () => {
     .send(payload);
   assert.equal(staff.status, 201);
   assert.equal(staff.body.data.resource.title, payload.title);
+  assert.deepEqual(staff.body.data.resource.publisher, {
+    connectOrCreate: {
+      where: { name: payload.publisherName },
+      create: { name: payload.publisherName },
+    },
+  });
+  assert.deepEqual(staff.body.data.resource.authors, {
+    create: [{
+      author: {
+        connectOrCreate: {
+          where: { name: payload.authorNames[0] },
+          create: { name: payload.authorNames[0] },
+        },
+      },
+    }],
+  });
   assert.equal(member.status, 403);
 });
 
@@ -370,13 +388,34 @@ test("librarians can update resource metadata and members cannot", async () => {
   const staff = await request(app)
     .patch("/api/v1/resources/resource-1")
     .set("Cookie", `${cookieName}=${librarianToken}`)
-    .send({ title: "Updated Library Resource" });
+    .send({
+      title: "Updated Library Resource",
+      publisherName: "Updated Press",
+      authorNames: ["Updated Author"],
+    });
   const member = await request(app)
     .patch("/api/v1/resources/resource-1")
     .set("Cookie", `${cookieName}=${memberToken}`)
     .send({ title: "Unauthorized edit" });
   assert.equal(staff.status, 200);
   assert.equal(staff.body.data.resource.title, "Updated Library Resource");
+  assert.deepEqual(staff.body.data.resource.publisher, {
+    connectOrCreate: {
+      where: { name: "Updated Press" },
+      create: { name: "Updated Press" },
+    },
+  });
+  assert.deepEqual(staff.body.data.resource.authors, {
+    deleteMany: {},
+    create: [{
+      author: {
+        connectOrCreate: {
+          where: { name: "Updated Author" },
+          create: { name: "Updated Author" },
+        },
+      },
+    }],
+  });
   assert.equal(member.status, 403);
 });
 

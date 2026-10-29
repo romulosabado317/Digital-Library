@@ -56,9 +56,13 @@ const resourceInputSchema = z.object({
   resourceType: z.enum(resourceTypes).default("BOOK"),
   categoryId: z.string().min(1).max(64).nullable().optional(),
   publisherId: z.string().min(1).max(64).nullable().optional(),
+  publisherName: z.string().trim().max(120).optional(),
   coverImageUrl: httpsUrl.optional(),
   digitalFileUrl: httpsUrl.optional(),
   authorIds: z.array(z.string().min(1).max(64)).max(30).optional(),
+  authorNames: z.array(z.string().trim().min(1).max(120)).max(30)
+    .transform((names) => [...new Set(names)])
+    .optional(),
 });
 const resourceUpdateSchema = resourceInputSchema.extend({
   resourceType: z.enum(resourceTypes).optional(),
@@ -342,15 +346,36 @@ export function createApp({
     requireRole("ADMIN", "LIBRARIAN"),
     asyncRoute(async (req, res) => {
       const input = resourceInputSchema.parse(req.body);
-      const { authorIds = [], categoryId, publisherId, ...fields } = input;
+      const {
+        authorIds = [],
+        authorNames = [],
+        categoryId,
+        publisherId,
+        publisherName,
+        ...fields
+      } = input;
       const resource = await prisma.$transaction(async (tx) => {
         const created = await tx.resource.create({
           data: {
             ...fields,
             ...(categoryId ? { category: { connect: { id: categoryId } } } : {}),
-            ...(publisherId ? { publisher: { connect: { id: publisherId } } } : {}),
+            ...(publisherName
+              ? {
+                publisher: {
+                  connectOrCreate: {
+                    where: { name: publisherName },
+                    create: { name: publisherName },
+                  },
+                },
+              }
+              : publisherId ? { publisher: { connect: { id: publisherId } } } : {}),
             authors: {
-              create: authorIds.map((authorId) => ({ author: { connect: { id: authorId } } })),
+              create: [
+                ...authorIds.map((authorId) => ({ author: { connect: { id: authorId } } })),
+                ...authorNames.map((name) => ({
+                  author: { connectOrCreate: { where: { name }, create: { name } } },
+                })),
+              ],
             },
           },
         });
@@ -375,7 +400,14 @@ export function createApp({
     asyncRoute(async (req, res) => {
       const id = z.string().min(1).max(64).parse(req.params.id);
       const input = resourceUpdateSchema.parse(req.body);
-      const { authorIds, categoryId, publisherId, ...fields } = input;
+      const {
+        authorIds,
+        authorNames,
+        categoryId,
+        publisherId,
+        publisherName,
+        ...fields
+      } = input;
       const resource = await prisma.$transaction(async (tx) => {
         const existing = await tx.resource.findFirst({
           where: { id, status: "ACTIVE" },
@@ -391,14 +423,30 @@ export function createApp({
             ...(categoryId !== undefined
               ? { category: categoryId ? { connect: { id: categoryId } } : { disconnect: true } }
               : {}),
-            ...(publisherId !== undefined
-              ? { publisher: publisherId ? { connect: { id: publisherId } } : { disconnect: true } }
+            ...(publisherName !== undefined
+              ? {
+                publisher: publisherName
+                  ? {
+                    connectOrCreate: {
+                      where: { name: publisherName },
+                      create: { name: publisherName },
+                    },
+                  }
+                  : { disconnect: true },
+              }
+              : publisherId !== undefined
+                ? { publisher: publisherId ? { connect: { id: publisherId } } : { disconnect: true } }
               : {}),
-            ...(authorIds !== undefined
+            ...(authorIds !== undefined || authorNames !== undefined
               ? {
                 authors: {
                   deleteMany: {},
-                  create: authorIds.map((authorId) => ({ author: { connect: { id: authorId } } })),
+                  create: [
+                    ...(authorIds ?? []).map((authorId) => ({ author: { connect: { id: authorId } } })),
+                    ...(authorNames ?? []).map((name) => ({
+                      author: { connectOrCreate: { where: { name }, create: { name } } },
+                    })),
+                  ],
                 },
               }
               : {}),

@@ -475,7 +475,15 @@ function MemberLoansPage({ user, onLogout }) {
 }
 
 function ResourceManagementPage({ user, onLogout }) {
-  const emptyResource = { title: "", description: "", isbn: "", publicationYear: "", resourceType: "BOOK" };
+  const emptyResource = {
+    title: "",
+    description: "",
+    isbn: "",
+    publicationYear: "",
+    resourceType: "BOOK",
+    authorNames: "",
+    publisherName: "",
+  };
   const [resources, setResources] = useState([]);
   const [form, setForm] = useState(emptyResource);
   const [editingId, setEditingId] = useState("");
@@ -515,6 +523,8 @@ function ResourceManagementPage({ user, onLogout }) {
       isbn: resource.isbn || "",
       publicationYear: resource.publicationYear || "",
       resourceType: resource.resourceType,
+      authorNames: resource.authors?.map(({ author }) => author.name).join(", ") || "",
+      publisherName: resource.publisher?.name || "",
     });
     setMessage("");
   }
@@ -529,6 +539,8 @@ function ResourceManagementPage({ user, onLogout }) {
       publicationYear: form.publicationYear ? Number(form.publicationYear) : undefined,
       isbn: form.isbn || undefined,
       description: form.description || undefined,
+      authorNames: form.authorNames.split(",").map((name) => name.trim()).filter(Boolean),
+      publisherName: form.publisherName.trim(),
     };
     try {
       if (editingId) {
@@ -630,6 +642,21 @@ function ResourceManagementPage({ user, onLogout }) {
                 <div><label htmlFor="resource-isbn">ISBN</label><input id="resource-isbn" name="isbn" maxLength="17" onChange={updateField} value={form.isbn} /></div>
                 <div><label htmlFor="resource-year">Publication year</label><input id="resource-year" max="2100" min="1400" name="publicationYear" onChange={updateField} type="number" value={form.publicationYear} /></div>
               </div>
+              <label htmlFor="resource-authors">Author(s)</label>
+              <input
+                id="resource-authors"
+                name="authorNames"
+                onChange={updateField}
+                placeholder="Separate multiple authors with commas"
+                value={form.authorNames}
+              />
+              <label htmlFor="resource-publisher">Publisher</label>
+              <input
+                id="resource-publisher"
+                name="publisherName"
+                onChange={updateField}
+                value={form.publisherName}
+              />
               <label htmlFor="resource-type">Resource format</label>
               <select id="resource-type" name="resourceType" onChange={updateField} value={form.resourceType}>
                 <option value="BOOK">Book</option>
