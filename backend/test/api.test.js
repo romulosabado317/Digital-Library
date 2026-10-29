@@ -15,6 +15,8 @@ function createApiFixture({
   nodeEnv = "test",
   memberMustChangePassword = false,
   simulatePasswordChangeBeforeLoginSession = false,
+  duplicateCopyIdentifier = false,
+  staffReservations = [],
 } = {}) {
   const users = {
     "librarian-1": {
@@ -120,7 +122,15 @@ function createApiFixture({
       }),
       updateMany: async () => ({ count: 1 }),
       count: async () => 0,
-      create: async ({ data }) => ({ id: "copy-2", ...data }),
+      create: async ({ data }) => {
+        if (duplicateCopyIdentifier) {
+          throw Object.assign(new Error("Unique constraint failed"), {
+            code: "P2002",
+            meta: { target: ["accession_number"] },
+          });
+        }
+        return { id: "copy-2", ...data };
+      },
     },
     loan: {
       findUnique: async () => activeLoan,
@@ -216,7 +226,10 @@ function createApiFixture({
           : [],
     },
     reservation: {
-      findMany: async () => [],
+      findMany: async ({ where = {} } = {}) => staffReservations.filter((reservation) => (
+        (!where.status || reservation.status === where.status)
+        && (!where.userId || reservation.userId === where.userId)
+      )),
     },
     $transaction: async (callback) => callback(tx),
   };
@@ -615,6 +628,17 @@ test("librarians can add physical copies but members cannot", async () => {
   assert.equal(member.status, 403);
 });
 
+test("duplicate copy accession numbers return an actionable conflict", async () => {
+  const response = await request(createApiFixture({ duplicateCopyIdentifier: true }))
+    .post("/api/v1/resources/resource-1/copies")
+    .set("Cookie", `${cookieName}=${librarianToken}`)
+    .send({ accessionNumber: "1" });
+
+  assert.equal(response.status, 409);
+  assert.equal(response.body.error.code, "DUPLICATE_ACCESSION_NUMBER");
+  assert.match(response.body.error.message, /already assigned/i);
+});
+
 test("physical copies cannot be added to digital resources", async () => {
   const response = await request(createApiFixture())
     .post("/api/v1/resources/digital-resource-1/copies")
@@ -682,6 +706,31 @@ test("members see only their own reservation list and staff can inspect the queu
   assert.equal(member.status, 200);
   assert.equal(staff.status, 200);
   assert.equal(memberStaffList.status, 403);
+});
+
+test("staff can see waiting reservations with member and resource details", async () => {
+  const waitingReservation = {
+    id: "reservation-waiting-1",
+    userId: "member-1",
+    resourceId: "resource-1",
+    queuePosition: 1,
+    status: "WAITING",
+    reservedAt: new Date("2026-10-29T00:00:00.000Z"),
+    user: { id: "member-1", fullName: "Demo Member", email: "member@example.test" },
+    resource: { id: "resource-1", title: "Foundations of Digital Libraries" },
+    physicalCopy: null,
+  };
+  const app = createApiFixture({ staffReservations: [waitingReservation] });
+  const response = await request(app)
+    .get("/api/v1/reservations?status=WAITING")
+    .set("Cookie", `${cookieName}=${librarianToken}`);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.data.length, 1);
+  assert.equal(response.body.data[0].status, "WAITING");
+  assert.equal(response.body.data[0].queuePosition, 1);
+  assert.equal(response.body.data[0].user.fullName, "Demo Member");
+  assert.equal(response.body.data[0].resource.title, "Foundations of Digital Libraries");
 });
 
 test("staff can list active loans, while members cannot", async () => {
