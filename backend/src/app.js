@@ -94,6 +94,7 @@ export function createApp({
 }) {
   const app = express();
   const allowedOrigins = new Set(env.FRONTEND_ORIGIN.split(",").map((origin) => origin.trim()));
+  const sessionCookieSameSite = env.NODE_ENV === "production" ? "none" : "lax";
 
   app.disable("x-powered-by");
   if (env.NODE_ENV === "production") {
@@ -220,7 +221,7 @@ export function createApp({
     res.cookie(env.SESSION_COOKIE_NAME, rawToken, {
       httpOnly: true,
       secure: env.NODE_ENV === "production",
-      sameSite: "lax",
+      sameSite: sessionCookieSameSite,
       path: "/",
       expires: expiresAt,
     });
@@ -238,7 +239,7 @@ export function createApp({
     res.clearCookie(env.SESSION_COOKIE_NAME, {
       httpOnly: true,
       secure: env.NODE_ENV === "production",
-      sameSite: "lax",
+      sameSite: sessionCookieSameSite,
       path: "/",
     });
     res.json({ data: { loggedOut: true } });

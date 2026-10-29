@@ -10,7 +10,7 @@ const librarianToken = "test-librarian-session";
 const memberToken = "test-member-session";
 const adminToken = "test-admin-session";
 
-function createApiFixture({ activeReservationCount = 0 } = {}) {
+function createApiFixture({ activeReservationCount = 0, nodeEnv = "test" } = {}) {
   const users = {
     "librarian-1": {
       id: "librarian-1",
@@ -183,7 +183,7 @@ function createApiFixture({ activeReservationCount = 0 } = {}) {
   const app = createApp({
     prisma,
     env: {
-      NODE_ENV: "test",
+      NODE_ENV: nodeEnv,
       FRONTEND_ORIGIN: "http://localhost:5173",
       SESSION_COOKIE_NAME: cookieName,
       SESSION_TTL_DAYS: 7,
@@ -214,6 +214,21 @@ test("login creates a secure HttpOnly cookie session", async () => {
   assert.equal(response.body.data.user.role, "LIBRARIAN");
   assert.match(response.headers["set-cookie"][0], /HttpOnly/i);
   assert.match(response.headers["set-cookie"][0], /SameSite=Lax/i);
+});
+
+test("production sessions allow cross-site frontend requests and remain secure", async () => {
+  const app = createApiFixture({ nodeEnv: "production" });
+  const login = await request(app)
+    .post("/api/v1/auth/login")
+    .send({ email: "librarian@example.test", password: "correct-password" });
+  const logout = await request(app)
+    .post("/api/v1/auth/logout")
+    .set("Cookie", `${cookieName}=${librarianToken}`);
+
+  assert.match(login.headers["set-cookie"][0], /SameSite=None/i);
+  assert.match(login.headers["set-cookie"][0], /Secure/i);
+  assert.match(logout.headers["set-cookie"][0], /SameSite=None/i);
+  assert.match(logout.headers["set-cookie"][0], /Secure/i);
 });
 
 test("librarian endpoints require authentication and reject member roles", async () => {
@@ -496,6 +511,7 @@ test("authenticated users can retrieve their own session identity and sign out",
   assert.equal(logout.status, 200);
   assert.equal(logout.body.data.loggedOut, true);
   assert.match(logout.headers["set-cookie"][0], /Expires=/i);
+  assert.match(logout.headers["set-cookie"][0], /SameSite=Lax/i);
 });
 
 test("API rejects requests from an unapproved origin", async () => {
