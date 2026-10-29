@@ -14,6 +14,7 @@ function createApiFixture({
   activeReservationCount = 0,
   nodeEnv = "test",
   memberMustChangePassword = false,
+  simulatePasswordChangeBeforeLoginSession = false,
 } = {}) {
   const users = {
     "librarian-1": {
@@ -45,6 +46,8 @@ function createApiFixture({
     [hashSessionToken(memberToken), users["member-1"]],
     [hashSessionToken(adminToken), users["admin-1"]],
   ]);
+  const sessionDeleteCalls = [];
+  const sessionCreateCalls = [];
   const activeLoan = {
     id: "loan-1",
     userId: "member-1",
@@ -80,6 +83,10 @@ function createApiFixture({
         ? users[where.id] ?? null
         : Object.values(users).find((user) => user.email === where.email) ?? null,
       updateMany: async ({ where, data }) => {
+        if (simulatePasswordChangeBeforeLoginSession && users[where.id]) {
+          users[where.id].passwordHash = bcrypt.hashSync("changed-concurrently", 4);
+          simulatePasswordChangeBeforeLoginSession = false;
+        }
         const user = users[where.id];
         if (!user || user.passwordHash !== where.passwordHash) return { count: 0 };
         Object.assign(user, data);
@@ -95,6 +102,10 @@ function createApiFixture({
       }),
     },
     session: {
+      create: async (args) => {
+        sessionCreateCalls.push(args);
+        return { id: "created-session" };
+      },
       deleteMany: async (args) => {
         sessionDeleteCalls.push(args);
         return { count: 1 };
@@ -144,10 +155,12 @@ function createApiFixture({
   const prisma = {
     user: {
       findUnique: async ({ where }) => {
+        if (where.id) return users[where.id] ? { ...users[where.id] } : null;
         if (where.email === "librarian@example.test") {
           return { ...users["librarian-1"], passwordHash: await bcrypt.hash("correct-password", 4) };
         }
-        return Object.values(users).find((user) => user.email === where.email) ?? null;
+        const user = Object.values(users).find((candidate) => candidate.email === where.email);
+        return user ? { ...user } : null;
       },
       findMany: async () => [{
         id: "member-1",
@@ -164,7 +177,10 @@ function createApiFixture({
           user,
         } : null;
       },
-      create: async () => ({ id: "created-session" }),
+      create: async (args) => {
+        sessionCreateCalls.push(args);
+        return { id: "created-session" };
+      },
       deleteMany: async () => ({ count: 1 }),
     },
     physicalCopy: {
@@ -206,7 +222,6 @@ function createApiFixture({
     },
     $transaction: async (callback) => callback(tx),
   };
-  const sessionDeleteCalls = [];
   prisma.session = {
     findUnique: async ({ where }) => {
       const user = sessions.get(where.tokenHash);
@@ -216,7 +231,10 @@ function createApiFixture({
         user,
       } : null;
     },
-    create: async () => ({ id: "created-session" }),
+    create: async (args) => {
+      sessionCreateCalls.push(args);
+      return { id: "created-session" };
+    },
     deleteMany: async () => ({ count: 1 }),
   };
   tx.session.deleteMany = async (args) => {
@@ -234,6 +252,7 @@ function createApiFixture({
   });
   app.locals.testUsers = users;
   app.locals.sessionDeleteCalls = sessionDeleteCalls;
+  app.locals.sessionCreateCalls = sessionCreateCalls;
   return app;
 }
 
@@ -278,6 +297,17 @@ test("temporary member login exposes the reset requirement and blocks protected 
   assert.equal(identity.body.data.user.mustChangePassword, true);
   assert.equal(loans.status, 403);
   assert.equal(loans.body.error.code, "PASSWORD_CHANGE_REQUIRED");
+});
+
+test("login does not create a session when the verified password changed concurrently", async () => {
+  const app = createApiFixture({ simulatePasswordChangeBeforeLoginSession: true });
+  const login = await request(app)
+    .post("/api/v1/auth/login")
+    .send({ email: "member@example.test", password: "temporary-password" });
+
+  assert.equal(login.status, 401);
+  assert.equal(login.body.error.code, "INVALID_CREDENTIALS");
+  assert.equal(app.locals.sessionCreateCalls.length, 0);
 });
 
 test("members change their temporary password and keep only the current session", async () => {
