@@ -491,7 +491,9 @@ function ResourceManagementPage({ user, onLogout }) {
   const [form, setForm] = useState(emptyResource);
   const [editingId, setEditingId] = useState("");
   const [copyFor, setCopyFor] = useState("");
-  const [accessionNumber, setAccessionNumber] = useState("");
+  const [accessionPrefix, setAccessionPrefix] = useState("");
+  const [startingNumber, setStartingNumber] = useState("1");
+  const [copyQuantity, setCopyQuantity] = useState("1");
   const [copyError, setCopyError] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -571,9 +573,15 @@ function ResourceManagementPage({ user, onLogout }) {
     setMessage("");
     setSaving(true);
     try {
-      await api.post(`/resources/${resourceId}/copies`, { accessionNumber });
-      setMessage("Physical copy added to inventory.");
-      setAccessionNumber("");
+      const { data } = await api.post(`/resources/${resourceId}/copies`, {
+        accessionPrefix,
+        startingNumber: Number(startingNumber),
+        quantity: Number(copyQuantity),
+      });
+      setMessage(`${data.data.copies.length} physical ${data.data.copies.length === 1 ? "copy" : "copies"} added to inventory.`);
+      setAccessionPrefix("");
+      setStartingNumber("1");
+      setCopyQuantity("1");
       setCopyFor("");
       await loadResources();
     } catch (requestError) {
@@ -695,23 +703,47 @@ function ResourceManagementPage({ user, onLogout }) {
                             <button className="small-button" onClick={() => {
                               setCopyFor(copyFor === resource.id ? "" : resource.id);
                               setCopyError("");
-                            }} type="button">Add copy</button>
+                              setAccessionPrefix("");
+                              setStartingNumber("1");
+                              setCopyQuantity("1");
+                            }} type="button">Add copies</button>
                           )}
                         </div>
                       </div>
                       {copyFor === resource.id && (
                         <form className="add-copy-form" onSubmit={(event) => void addCopy(event, resource.id)}>
-                          <label htmlFor={`accession-${resource.id}`}>Unique accession number</label>
+                          <label htmlFor={`accession-prefix-${resource.id}`}>Accession prefix</label>
                           <input
-                            id={`accession-${resource.id}`}
-                            maxLength="64"
-                            onChange={(event) => setAccessionNumber(event.target.value)}
+                            id={`accession-prefix-${resource.id}`}
+                            maxLength="61"
+                            onChange={(event) => setAccessionPrefix(event.target.value)}
+                            placeholder="BOOK-"
                             required
-                            value={accessionNumber}
+                            value={accessionPrefix}
                           />
-                          <span className="hint">Each physical copy needs a unique accession number across the library.</span>
+                          <label htmlFor={`starting-number-${resource.id}`}>Starting number</label>
+                          <input
+                            id={`starting-number-${resource.id}`}
+                            max="999999999"
+                            min="1"
+                            onChange={(event) => setStartingNumber(event.target.value)}
+                            required
+                            type="number"
+                            value={startingNumber}
+                          />
+                          <label htmlFor={`copy-quantity-${resource.id}`}>How many copies?</label>
+                          <input
+                            id={`copy-quantity-${resource.id}`}
+                            max="100"
+                            min="1"
+                            onChange={(event) => setCopyQuantity(event.target.value)}
+                            required
+                            type="number"
+                            value={copyQuantity}
+                          />
+                          <span className="hint">Example: prefix BOOK-, start 1, quantity 3 creates BOOK-001, BOOK-002, and BOOK-003. Each number must be unique.</span>
                           {copyError && <p className="form-error" role="alert">{copyError}</p>}
-                          <button className="secondary-button" disabled={saving} type="submit">{saving ? "Adding..." : "Save copy"}</button>
+                          <button className="secondary-button" disabled={saving} type="submit">{saving ? "Adding..." : "Save copies"}</button>
                         </form>
                       )}
                     </article>

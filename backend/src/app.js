@@ -82,10 +82,22 @@ const resourceListQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(24),
 });
-const copyInputSchema = z.object({
+const singleCopyInputSchema = z.object({
   accessionNumber: z.string().trim().min(1).max(64),
   barcode: z.string().trim().min(1).max(64).optional(),
 });
+const batchCopyInputSchema = z.object({
+  accessionPrefix: z.string().trim().min(1).max(64),
+  startingNumber: z.number().int().min(1).max(999_999_999),
+  quantity: z.number().int().min(1).max(100),
+}).refine(
+  ({ accessionPrefix, startingNumber, quantity }) => (
+    accessionPrefix.length
+      + Math.max(3, String(startingNumber + quantity - 1).length) <= 64
+  ),
+  { message: "The generated accession numbers must not exceed 64 characters." },
+);
+const copyInputSchema = z.union([singleCopyInputSchema, batchCopyInputSchema]);
 
 function asyncRoute(handler) {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
@@ -601,9 +613,14 @@ export function createApp({
     asyncRoute(async (req, res) => {
       const resourceId = z.string().min(1).max(64).parse(req.params.id);
       const input = copyInputSchema.parse(req.body);
-      let copy;
+      const copiesToCreate = "accessionNumber" in input
+        ? [{ accessionNumber: input.accessionNumber, barcode: input.barcode }]
+        : Array.from({ length: input.quantity }, (_, index) => ({
+          accessionNumber: `${input.accessionPrefix}${String(input.startingNumber + index).padStart(3, "0")}`,
+        }));
+      let copies;
       try {
-        copy = await prisma.$transaction(async (tx) => {
+        copies = await prisma.$transaction(async (tx) => {
           const resource = await tx.resource.findFirst({
             where: { id: resourceId, status: "ACTIVE" },
             select: { id: true, resourceType: true },
@@ -618,19 +635,23 @@ export function createApp({
               "Physical copies cannot be added to digital resources.",
             );
           }
-          const created = await tx.physicalCopy.create({
-            data: { ...input, resourceId },
-          });
-          await tx.auditLog.create({
-            data: {
-              actorUserId: req.user.id,
-              action: "PHYSICAL_COPY_CREATED",
-              entityType: "PhysicalCopy",
-              entityId: created.id,
-              metadata: { resourceId },
-            },
-          });
-          return created;
+          const createdCopies = [];
+          for (const copyInput of copiesToCreate) {
+            const created = await tx.physicalCopy.create({
+              data: { ...copyInput, resourceId },
+            });
+            await tx.auditLog.create({
+              data: {
+                actorUserId: req.user.id,
+                action: "PHYSICAL_COPY_CREATED",
+                entityType: "PhysicalCopy",
+                entityId: created.id,
+                metadata: { resourceId },
+              },
+            });
+            createdCopies.push(created);
+          }
+          return createdCopies;
         });
       } catch (error) {
         if (error?.code === "P2002") {
@@ -660,7 +681,11 @@ export function createApp({
         }
         throw error;
       }
-      res.status(201).json({ data: { copy } });
+      if ("accessionNumber" in input) {
+        res.status(201).json({ data: { copy: copies[0] } });
+      } else {
+        res.status(201).json({ data: { copies } });
+      }
     }),
   );
 
