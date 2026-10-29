@@ -186,6 +186,22 @@ test("rejects reservations when an available copy can be borrowed", async () => 
   assert.equal(calls.some(({ type }) => type === "reservation.create"), false);
 });
 
+test("members can join the queue when available copies are waiting for staff approval", async () => {
+  const { prisma, calls } = createReservationFixture({
+    availableCopies: 1,
+    nextReservation: { id: "reservation-1", queuePosition: 1, status: "WAITING" },
+    lastReservation: { queuePosition: 1 },
+  });
+  const result = await createReservation(prisma, {
+    memberId: "member-2",
+    resourceId: "resource-1",
+  });
+
+  assert.equal(result.status, "WAITING");
+  assert.equal(result.queuePosition, 2);
+  assert.ok(calls.some(({ type }) => type === "reservation.create"));
+});
+
 test("rejects reservations for digital resources", async () => {
   const { prisma, calls } = createReservationFixture({ resourceType: "DIGITAL_RESOURCE" });
   await assert.rejects(

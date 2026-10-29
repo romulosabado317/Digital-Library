@@ -17,6 +17,11 @@ function createApiFixture({
   simulatePasswordChangeBeforeLoginSession = false,
   duplicateCopyIdentifier = false,
   staffReservations = [],
+  approvalReservation = null,
+  queueHeadReservation = approvalReservation,
+  availableCopy = null,
+  availableCopyCount = 0,
+  waitingReservationCount = 0,
 } = {}) {
   const users = {
     "librarian-1": {
@@ -122,8 +127,9 @@ function createApiFixture({
         copyStatus: "AVAILABLE",
         resource: { id: "resource-1", status: "ACTIVE" },
       }),
+      findFirst: async () => availableCopy,
       updateMany: async () => ({ count: 1 }),
-      count: async () => 0,
+      count: async () => availableCopyCount,
       create: async ({ data }) => {
         if (duplicateCopyIdentifier) {
           copyCreateCalls.push(data);
@@ -142,8 +148,12 @@ function createApiFixture({
       create: async ({ data }) => ({ id: "loan-1", ...data }),
     },
     reservation: {
-      findFirst: async ({ where }) => where.userId ? null : null,
-      findUnique: async () => null,
+      findFirst: async ({ where }) => {
+        if (where.userId) return null;
+        if (where.status === "WAITING") return queueHeadReservation;
+        return null;
+      },
+      findUnique: async () => approvalReservation,
       findMany: async () => [],
       count: async () => activeReservationCount,
       create: async ({ data }) => ({ id: "reservation-1", ...data }),
@@ -206,7 +216,7 @@ function createApiFixture({
         accessionNumber: "DEMO-0001",
         resource: { id: "resource-1", title: "Foundations of Digital Libraries", isbn: "9780000000001" },
       }],
-      count: async () => 0,
+      count: async () => availableCopyCount,
     },
     resource: {
       findMany: async ({ where, select }) => {
@@ -239,6 +249,9 @@ function createApiFixture({
         (!where.status || reservation.status === where.status)
         && (!where.userId || reservation.userId === where.userId)
       )),
+      count: async ({ where }) => (
+        where.status === "WAITING" ? waitingReservationCount : activeReservationCount
+      ),
     },
     $transaction: async (callback) => callback(tx),
   };
@@ -532,6 +545,17 @@ test("public resource details only return active catalog records", async () => {
   assert.equal(missing.status, 404);
 });
 
+test("public resource details hide available copies while a reservation queue awaits staff approval", async () => {
+  const app = createApiFixture({
+    availableCopyCount: 2,
+    waitingReservationCount: 1,
+  });
+  const response = await request(app).get("/api/v1/resources/resource-1");
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.data.availableCopies, 0);
+});
+
 test("librarians can create resources, but members cannot", async () => {
   const payload = {
     title: "New Library Resource",
@@ -776,6 +800,32 @@ test("staff can see waiting reservations with member and resource details", asyn
   assert.equal(response.body.data[0].resource.title, "Foundations of Digital Libraries");
   assert.equal(adminResponse.status, 200);
   assert.equal(adminResponse.body.data[0].status, "WAITING");
+});
+
+test("staff can approve the first waiting reservation when a copy is available", async () => {
+  const approvalReservation = {
+    id: "reservation-waiting-1",
+    userId: "member-1",
+    resourceId: "resource-1",
+    queuePosition: 1,
+    status: "WAITING",
+    physicalCopyId: null,
+  };
+  const app = createApiFixture({
+    approvalReservation,
+    availableCopy: { id: "copy-available-1", accessionNumber: "BOOK-001" },
+  });
+  const staff = await request(app)
+    .post("/api/v1/reservations/reservation-waiting-1/approve")
+    .set("Cookie", `${cookieName}=${librarianToken}`);
+  const member = await request(app)
+    .post("/api/v1/reservations/reservation-waiting-1/approve")
+    .set("Cookie", `${cookieName}=${memberToken}`);
+
+  assert.equal(staff.status, 200);
+  assert.equal(staff.body.data.reservation.status, "AVAILABLE");
+  assert.equal(staff.body.data.reservation.physicalCopyId, "copy-available-1");
+  assert.equal(member.status, 403);
 });
 
 test("staff can list active loans, while members cannot", async () => {

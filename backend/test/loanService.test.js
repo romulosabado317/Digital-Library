@@ -200,6 +200,7 @@ test("rejects a concurrent issue when the conditional inventory update loses", a
         }),
         updateMany: async () => ({ count: 0 }),
       },
+      reservation: { findFirst: async () => null },
       loan: { create: async () => assert.fail("must not create a loan") },
       notification: { create: async () => assert.fail("must not notify") },
       auditLog: { create: async () => assert.fail("must not audit") },
