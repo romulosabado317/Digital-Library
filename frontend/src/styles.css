@@ -290,6 +290,7 @@ tbody tr:last-child td { border-bottom: 0; }
 .add-copy-form { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 8px; padding-top: 12px; }
 .add-copy-form label { grid-column: 1 / -1; color: #344054; font-size: 12px; font-weight: 650; }
 .add-copy-form input { min-height: 40px; min-width: 0; padding: 0 10px; border: 1px solid #d0d5dd; border-radius: 8px; }
+.add-copy-form .hint, .add-copy-form .form-error { grid-column: 1 / -1; }
 .add-copy-form .secondary-button { min-height: 40px; margin: 0; }
 
 @media (max-width: 780px) {

@@ -492,6 +492,7 @@ function ResourceManagementPage({ user, onLogout }) {
   const [editingId, setEditingId] = useState("");
   const [copyFor, setCopyFor] = useState("");
   const [accessionNumber, setAccessionNumber] = useState("");
+  const [copyError, setCopyError] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -565,6 +566,7 @@ function ResourceManagementPage({ user, onLogout }) {
 
   async function addCopy(event, resourceId) {
     event.preventDefault();
+    setCopyError("");
     setError("");
     setMessage("");
     setSaving(true);
@@ -575,7 +577,7 @@ function ResourceManagementPage({ user, onLogout }) {
       setCopyFor("");
       await loadResources();
     } catch (requestError) {
-      setError(requestError.response?.data?.error?.message ?? "The copy could not be added.");
+      setCopyError(requestError.response?.data?.error?.message ?? "The copy could not be added.");
     } finally {
       setSaving(false);
     }
@@ -690,14 +692,25 @@ function ResourceManagementPage({ user, onLogout }) {
                           <button className="small-button" onClick={() => beginEdit(resource)} type="button">Edit</button>
                           <button className="small-button danger-button" onClick={() => void archiveResource(resource)} type="button">Archive</button>
                           {resource.resourceType !== "DIGITAL_RESOURCE" && (
-                            <button className="small-button" onClick={() => setCopyFor(copyFor === resource.id ? "" : resource.id)} type="button">Add copy</button>
+                            <button className="small-button" onClick={() => {
+                              setCopyFor(copyFor === resource.id ? "" : resource.id);
+                              setCopyError("");
+                            }} type="button">Add copy</button>
                           )}
                         </div>
                       </div>
                       {copyFor === resource.id && (
                         <form className="add-copy-form" onSubmit={(event) => void addCopy(event, resource.id)}>
-                          <label htmlFor={`accession-${resource.id}`}>Accession number</label>
-                          <input id={`accession-${resource.id}`} maxLength="64" onChange={(event) => setAccessionNumber(event.target.value)} required value={accessionNumber} />
+                          <label htmlFor={`accession-${resource.id}`}>Unique accession number</label>
+                          <input
+                            id={`accession-${resource.id}`}
+                            maxLength="64"
+                            onChange={(event) => setAccessionNumber(event.target.value)}
+                            required
+                            value={accessionNumber}
+                          />
+                          <span className="hint">Each physical copy needs a unique accession number across the library.</span>
+                          {copyError && <p className="form-error" role="alert">{copyError}</p>}
                           <button className="secondary-button" disabled={saving} type="submit">{saving ? "Adding..." : "Save copy"}</button>
                         </form>
                       )}
@@ -718,6 +731,7 @@ function LoanDesk({ user, onLogout }) {
   const [copies, setCopies] = useState([]);
   const [loans, setLoans] = useState([]);
   const [readyReservations, setReadyReservations] = useState([]);
+  const [waitingReservations, setWaitingReservations] = useState([]);
   const [memberId, setMemberId] = useState("");
   const [copyId, setCopyId] = useState("");
   const [returningId, setReturningId] = useState("");
@@ -731,16 +745,18 @@ function LoanDesk({ user, onLogout }) {
     setLoading(true);
     setError("");
     try {
-      const [membersResponse, copiesResponse, loansResponse, reservationsResponse] = await Promise.all([
+      const [membersResponse, copiesResponse, loansResponse, readyReservationsResponse, waitingReservationsResponse] = await Promise.all([
         api.get("/users"),
         api.get("/resources/copies", { params: { status: "AVAILABLE" } }),
         api.get("/loans", { params: { status: "ACTIVE" } }),
         api.get("/reservations", { params: { status: "AVAILABLE" } }),
+        api.get("/reservations", { params: { status: "WAITING" } }),
       ]);
       const nextMembers = membersResponse.data.data;
       const nextCopies = copiesResponse.data.data;
       setLoans(loansResponse.data.data);
-      setReadyReservations(reservationsResponse.data.data);
+      setReadyReservations(readyReservationsResponse.data.data);
+      setWaitingReservations(waitingReservationsResponse.data.data);
       setMembers(nextMembers);
       setCopies(nextCopies);
       setMemberId((current) => nextMembers.some((member) => member.id === current) ? current : "");
@@ -931,6 +947,28 @@ function LoanDesk({ user, onLogout }) {
                 ))}
               </div>
             ) : <p className="empty-note" role="status">No reservations are waiting for pickup.</p>}
+        </section>
+        <section className="panel loans-panel" aria-labelledby="waiting-reservations-title">
+          <div className="panel-heading">
+            <div className="heading-icon soft"><LibraryBig size={20} aria-hidden="true" /></div>
+            <div><h2 id="waiting-reservations-title">Waiting reservation queue</h2><p>Members waiting for a copy to become available.</p></div>
+          </div>
+          {loading ? <p className="loading-state" role="status">Loading reservation queue...</p>
+            : waitingReservations.length ? (
+              <div className="management-resource-list">
+                {waitingReservations.map((reservation) => (
+                  <article className="management-resource" key={reservation.id}>
+                    <div className="management-resource-main">
+                      <div>
+                        <strong>{reservation.resource.title}</strong>
+                        <span>{reservation.user.fullName} · Queue position {reservation.queuePosition}</span>
+                        <span>Requested {new Date(reservation.reservedAt).toLocaleDateString()}</span>
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : <p className="empty-note" role="status">No members are waiting in a reservation queue.</p>}
         </section>
         <section className="panel loans-panel" aria-labelledby="active-loans-title">
           <div className="panel-heading">

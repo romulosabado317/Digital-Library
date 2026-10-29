@@ -601,35 +601,65 @@ export function createApp({
     asyncRoute(async (req, res) => {
       const resourceId = z.string().min(1).max(64).parse(req.params.id);
       const input = copyInputSchema.parse(req.body);
-      const copy = await prisma.$transaction(async (tx) => {
-        const resource = await tx.resource.findFirst({
-          where: { id: resourceId, status: "ACTIVE" },
-          select: { id: true, resourceType: true },
+      let copy;
+      try {
+        copy = await prisma.$transaction(async (tx) => {
+          const resource = await tx.resource.findFirst({
+            where: { id: resourceId, status: "ACTIVE" },
+            select: { id: true, resourceType: true },
+          });
+          if (!resource) {
+            throw new HttpError(404, "RESOURCE_NOT_FOUND", "The requested resource was not found.");
+          }
+          if (resource.resourceType === "DIGITAL_RESOURCE") {
+            throw new HttpError(
+              400,
+              "PHYSICAL_COPY_NOT_ALLOWED",
+              "Physical copies cannot be added to digital resources.",
+            );
+          }
+          const created = await tx.physicalCopy.create({
+            data: { ...input, resourceId },
+          });
+          await tx.auditLog.create({
+            data: {
+              actorUserId: req.user.id,
+              action: "PHYSICAL_COPY_CREATED",
+              entityType: "PhysicalCopy",
+              entityId: created.id,
+              metadata: { resourceId },
+            },
+          });
+          return created;
         });
-        if (!resource) {
-          throw new HttpError(404, "RESOURCE_NOT_FOUND", "The requested resource was not found.");
-        }
-        if (resource.resourceType === "DIGITAL_RESOURCE") {
+      } catch (error) {
+        if (error?.code === "P2002") {
+          const target = Array.isArray(error.meta?.target)
+            ? error.meta.target.join(" ")
+            : String(error.meta?.target ?? "");
+          const normalizedTarget = target.toLowerCase().replaceAll("_", "");
+          if (normalizedTarget.includes("accessionnumber")) {
+            throw new HttpError(
+              409,
+              "DUPLICATE_ACCESSION_NUMBER",
+              "That accession number is already assigned to another copy. Enter a unique accession number.",
+            );
+          }
+          if (target.includes("barcode")) {
+            throw new HttpError(
+              409,
+              "DUPLICATE_BARCODE",
+              "That barcode is already assigned to another copy. Enter a unique barcode.",
+            );
+          }
           throw new HttpError(
-            400,
-            "PHYSICAL_COPY_NOT_ALLOWED",
-            "Physical copies cannot be added to digital resources.",
+            409,
+            "DUPLICATE_COPY_IDENTIFIER",
+            "The accession number or barcode is already assigned to another copy. Use unique identifiers.",
           );
         }
-        const created = await tx.physicalCopy.create({
-          data: { ...input, resourceId },
-        });
-        await tx.auditLog.create({
-          data: {
-            actorUserId: req.user.id,
-            action: "PHYSICAL_COPY_CREATED",
-            entityType: "PhysicalCopy",
-            entityId: created.id,
-            metadata: { resourceId },
-          },
-        });
-        return created;
-      });
+        throw error;
+      }
       res.status(201).json({ data: { copy } });
     }),
   );

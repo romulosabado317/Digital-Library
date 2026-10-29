@@ -126,7 +126,7 @@ function createApiFixture({
         if (duplicateCopyIdentifier) {
           throw Object.assign(new Error("Unique constraint failed"), {
             code: "P2002",
-            meta: { target: ["accession_number"] },
+            meta: { target: ["accessionNumber"] },
           });
         }
         return { id: "copy-2", ...data };
@@ -724,6 +724,9 @@ test("staff can see waiting reservations with member and resource details", asyn
   const response = await request(app)
     .get("/api/v1/reservations?status=WAITING")
     .set("Cookie", `${cookieName}=${librarianToken}`);
+  const adminResponse = await request(app)
+    .get("/api/v1/reservations?status=WAITING")
+    .set("Cookie", `${cookieName}=${adminToken}`);
 
   assert.equal(response.status, 200);
   assert.equal(response.body.data.length, 1);
@@ -731,6 +734,8 @@ test("staff can see waiting reservations with member and resource details", asyn
   assert.equal(response.body.data[0].queuePosition, 1);
   assert.equal(response.body.data[0].user.fullName, "Demo Member");
   assert.equal(response.body.data[0].resource.title, "Foundations of Digital Libraries");
+  assert.equal(adminResponse.status, 200);
+  assert.equal(adminResponse.body.data[0].status, "WAITING");
 });
 
 test("staff can list active loans, while members cannot", async () => {

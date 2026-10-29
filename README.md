@@ -19,10 +19,10 @@ Core relationships: `User` owns sessions, loans, reservations, notifications, an
 - Transactional loan creation that verifies member status and resource/copy availability, claims the copy conditionally, creates an in-app notification, and writes an audit record.
 - Transactional return processing that supports overdue loans, releases inventory, notifies the member, and writes an audit record.
 - Staff active-loan list with return processing, plus a member loan endpoint scoped to the authenticated user.
-- Member reservation queues with duplicate protection, cancellation, FIFO promotion on return, a 48-hour pickup hold, and activity-driven expiry processing. Staff can inspect ready reservations and issue the held copy only to its member.
+- Member reservation queues with duplicate protection, cancellation, FIFO promotion on return, a 48-hour pickup hold, and activity-driven expiry processing. The staff loan desk shows both waiting reservations and ready pickup holds; staff can issue a held copy only to its reserved member.
 - Reservation queue creation, cancellation, expiry, copy promotion, and loan fulfillment run in serializable database transactions; active reservations block resource archival.
 - Public resource catalog is the homepage, with title/description/author search, format/category filters, pagination, resource details, and public metadata that omits private digital file links.
-- Librarian resource management UI and API for creating/updating/archive catalog records and adding physical copies; archive preserves historical loan records.
+- Librarian resource management UI and API for creating/updating/archive catalog records and adding physical copies; accession numbers must be unique across the library, and archive preserves historical loan records.
 - Account management lets administrators create librarian and member accounts, while librarians can create member accounts only; passwords are hashed server-side and creations are audit logged.
 - Newly created member accounts receive a temporary password and must change it at first sign-in before using authenticated features. Members can change it again later; existing accounts and librarian accounts are not forced to reset.
 - Members change passwords from the **Change password** link or are directed to the password form immediately after signing in with a temporary password. The API verifies the current password, enforces password length limits, and invalidates the member's other sessions.
