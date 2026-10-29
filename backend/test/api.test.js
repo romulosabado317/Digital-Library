@@ -10,7 +10,11 @@ const librarianToken = "test-librarian-session";
 const memberToken = "test-member-session";
 const adminToken = "test-admin-session";
 
-function createApiFixture({ activeReservationCount = 0, nodeEnv = "test" } = {}) {
+function createApiFixture({
+  activeReservationCount = 0,
+  nodeEnv = "test",
+  memberMustChangePassword = false,
+} = {}) {
   const users = {
     "librarian-1": {
       id: "librarian-1",
@@ -25,6 +29,8 @@ function createApiFixture({ activeReservationCount = 0, nodeEnv = "test" } = {})
       email: "member@example.test",
       role: "MEMBER",
       accountStatus: "ACTIVE",
+      mustChangePassword: memberMustChangePassword,
+      passwordHash: bcrypt.hashSync("temporary-password", 4),
     },
     "admin-1": {
       id: "admin-1",
@@ -73,13 +79,26 @@ function createApiFixture({ activeReservationCount = 0, nodeEnv = "test" } = {})
       findUnique: async ({ where }) => where.id
         ? users[where.id] ?? null
         : Object.values(users).find((user) => user.email === where.email) ?? null,
+      updateMany: async ({ where, data }) => {
+        const user = users[where.id];
+        if (!user || user.passwordHash !== where.passwordHash) return { count: 0 };
+        Object.assign(user, data);
+        return { count: 1 };
+      },
       create: async ({ data }) => ({
         id: "managed-user-1",
         fullName: data.fullName,
         email: data.email,
         role: data.role,
         accountStatus: data.accountStatus,
+        mustChangePassword: data.mustChangePassword,
       }),
+    },
+    session: {
+      deleteMany: async (args) => {
+        sessionDeleteCalls.push(args);
+        return { count: 1 };
+      },
     },
     physicalCopy: {
       findUnique: async () => ({
@@ -187,6 +206,23 @@ function createApiFixture({ activeReservationCount = 0, nodeEnv = "test" } = {})
     },
     $transaction: async (callback) => callback(tx),
   };
+  const sessionDeleteCalls = [];
+  prisma.session = {
+    findUnique: async ({ where }) => {
+      const user = sessions.get(where.tokenHash);
+      return user ? {
+        id: "session-1",
+        expiresAt: new Date(Date.now() + 60_000),
+        user,
+      } : null;
+    },
+    create: async () => ({ id: "created-session" }),
+    deleteMany: async () => ({ count: 1 }),
+  };
+  tx.session.deleteMany = async (args) => {
+    sessionDeleteCalls.push(args);
+    return { count: 1 };
+  };
   const app = createApp({
     prisma,
     env: {
@@ -196,6 +232,8 @@ function createApiFixture({ activeReservationCount = 0, nodeEnv = "test" } = {})
       SESSION_TTL_DAYS: 7,
     },
   });
+  app.locals.testUsers = users;
+  app.locals.sessionDeleteCalls = sessionDeleteCalls;
   return app;
 }
 
@@ -221,6 +259,79 @@ test("login creates a secure HttpOnly cookie session", async () => {
   assert.equal(response.body.data.user.role, "LIBRARIAN");
   assert.match(response.headers["set-cookie"][0], /HttpOnly/i);
   assert.match(response.headers["set-cookie"][0], /SameSite=Lax/i);
+});
+
+test("temporary member login exposes the reset requirement and blocks protected features", async () => {
+  const app = createApiFixture({ memberMustChangePassword: true });
+  const login = await request(app)
+    .post("/api/v1/auth/login")
+    .send({ email: "member@example.test", password: "temporary-password" });
+  const identity = await request(app)
+    .get("/api/v1/auth/me")
+    .set("Cookie", `${cookieName}=${memberToken}`);
+  const loans = await request(app)
+    .get("/api/v1/loans/me")
+    .set("Cookie", `${cookieName}=${memberToken}`);
+
+  assert.equal(login.status, 200);
+  assert.equal(login.body.data.user.mustChangePassword, true);
+  assert.equal(identity.body.data.user.mustChangePassword, true);
+  assert.equal(loans.status, 403);
+  assert.equal(loans.body.error.code, "PASSWORD_CHANGE_REQUIRED");
+});
+
+test("members change their temporary password and keep only the current session", async () => {
+  const app = createApiFixture({ memberMustChangePassword: true });
+  const invalidCurrentPassword = await request(app)
+    .post("/api/v1/auth/password")
+    .set("Cookie", `${cookieName}=${memberToken}`)
+    .send({ currentPassword: "incorrect-password", newPassword: "A new member password" });
+  const samePassword = await request(app)
+    .post("/api/v1/auth/password")
+    .set("Cookie", `${cookieName}=${memberToken}`)
+    .send({ currentPassword: "temporary-password", newPassword: "temporary-password" });
+  const changed = await request(app)
+    .post("/api/v1/auth/password")
+    .set("Cookie", `${cookieName}=${memberToken}`)
+    .send({ currentPassword: "temporary-password", newPassword: "A new member password" });
+  const loans = await request(app)
+    .get("/api/v1/loans/me")
+    .set("Cookie", `${cookieName}=${memberToken}`);
+  const oldPasswordLogin = await request(app)
+    .post("/api/v1/auth/login")
+    .send({ email: "member@example.test", password: "temporary-password" });
+  const newPasswordLogin = await request(app)
+    .post("/api/v1/auth/login")
+    .send({ email: "member@example.test", password: "A new member password" });
+
+  assert.equal(invalidCurrentPassword.status, 401);
+  assert.equal(samePassword.status, 400);
+  assert.equal(changed.status, 200);
+  assert.equal(changed.body.data.user.mustChangePassword, false);
+  assert.equal(Object.hasOwn(changed.body.data.user, "passwordHash"), false);
+  assert.equal(await bcrypt.compare("A new member password", app.locals.testUsers["member-1"].passwordHash), true);
+  assert.deepEqual(app.locals.sessionDeleteCalls.at(-1), {
+    where: { userId: "member-1", id: { not: "session-1" } },
+  });
+  assert.equal(loans.status, 200);
+  assert.equal(oldPasswordLogin.status, 401);
+  assert.equal(newPasswordLogin.status, 200);
+  assert.equal(newPasswordLogin.body.data.user.mustChangePassword, false);
+});
+
+test("password changes reject weak and oversized passwords", async () => {
+  const app = createApiFixture();
+  const weak = await request(app)
+    .post("/api/v1/auth/password")
+    .set("Cookie", `${cookieName}=${memberToken}`)
+    .send({ currentPassword: "temporary-password", newPassword: "short" });
+  const oversized = await request(app)
+    .post("/api/v1/auth/password")
+    .set("Cookie", `${cookieName}=${memberToken}`)
+    .send({ currentPassword: "temporary-password", newPassword: "é".repeat(37) });
+
+  assert.equal(weak.status, 400);
+  assert.equal(oversized.status, 400);
 });
 
 test("production sessions allow cross-site frontend requests and remain secure", async () => {

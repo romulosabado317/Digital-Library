@@ -44,6 +44,7 @@ test("creates a normalized active librarian and stores only a password hash", as
   assert.equal(user.email, "alex@icct.edu.ph");
   assert.equal(user.role, "LIBRARIAN");
   assert.equal(user.accountStatus, "ACTIVE");
+  assert.equal(user.mustChangePassword, false);
   assert.equal(Object.hasOwn(calls[1].data, "password"), false);
   assert.equal(await bcrypt.compare("A unique password 12", calls[1].data.passwordHash), true);
 });
@@ -59,6 +60,7 @@ test("creates active member accounts", async () => {
 
   assert.equal(user.role, "MEMBER");
   assert.equal(user.accountStatus, "ACTIVE");
+  assert.equal(user.mustChangePassword, true);
 });
 
 test("rejects passwords shorter than 8 characters before database access", async () => {
