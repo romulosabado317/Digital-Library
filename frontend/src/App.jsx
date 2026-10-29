@@ -686,7 +686,9 @@ function ResourceManagementPage({ user, onLogout }) {
                         <div className="management-actions">
                           <button className="small-button" onClick={() => beginEdit(resource)} type="button">Edit</button>
                           <button className="small-button danger-button" onClick={() => void archiveResource(resource)} type="button">Archive</button>
-                          <button className="small-button" onClick={() => setCopyFor(copyFor === resource.id ? "" : resource.id)} type="button">Add copy</button>
+                          {resource.resourceType !== "DIGITAL_RESOURCE" && (
+                            <button className="small-button" onClick={() => setCopyFor(copyFor === resource.id ? "" : resource.id)} type="button">Add copy</button>
+                          )}
                         </div>
                       </div>
                       {copyFor === resource.id && (

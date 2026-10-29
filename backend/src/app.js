@@ -525,10 +525,17 @@ export function createApp({
       const copy = await prisma.$transaction(async (tx) => {
         const resource = await tx.resource.findFirst({
           where: { id: resourceId, status: "ACTIVE" },
-          select: { id: true },
+          select: { id: true, resourceType: true },
         });
         if (!resource) {
           throw new HttpError(404, "RESOURCE_NOT_FOUND", "The requested resource was not found.");
+        }
+        if (resource.resourceType === "DIGITAL_RESOURCE") {
+          throw new HttpError(
+            400,
+            "PHYSICAL_COPY_NOT_ALLOWED",
+            "Physical copies cannot be added to digital resources.",
+          );
         }
         const created = await tx.physicalCopy.create({
           data: { ...input, resourceId },

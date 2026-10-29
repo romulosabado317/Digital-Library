@@ -107,8 +107,15 @@ function createApiFixture({ activeReservationCount = 0, nodeEnv = "test" } = {})
     notification: { create: async () => ({ id: "notification-1" }) },
     auditLog: { create: async () => ({ id: "audit-1" }) },
     resource: {
-      findFirst: async ({ where }) => where.id === "resource-1" && where.status === "ACTIVE"
-        ? { id: "resource-1", status: "ACTIVE", resourceType: "BOOK" }
+      findFirst: async ({ where }) => (
+        where.status === "ACTIVE"
+        && ["resource-1", "digital-resource-1"].includes(where.id)
+      )
+        ? {
+          id: where.id,
+          status: "ACTIVE",
+          resourceType: where.id === "digital-resource-1" ? "DIGITAL_RESOURCE" : "BOOK",
+        }
         : null,
       create: async ({ data }) => ({ id: "resource-2", ...data }),
       update: async ({ data }) => ({ id: "resource-1", ...data }),
@@ -450,6 +457,16 @@ test("librarians can add physical copies but members cannot", async () => {
   assert.equal(staff.status, 201);
   assert.equal(staff.body.data.copy.accessionNumber, payload.accessionNumber);
   assert.equal(member.status, 403);
+});
+
+test("physical copies cannot be added to digital resources", async () => {
+  const response = await request(createApiFixture())
+    .post("/api/v1/resources/digital-resource-1/copies")
+    .set("Cookie", `${cookieName}=${librarianToken}`)
+    .send({ accessionNumber: "DIGITAL-COPY-0001" });
+
+  assert.equal(response.status, 400);
+  assert.equal(response.body.error.code, "PHYSICAL_COPY_NOT_ALLOWED");
 });
 
 test("resource archive preserves the catalog record and requires staff authorization", async () => {
